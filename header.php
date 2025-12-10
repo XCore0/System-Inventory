@@ -55,6 +55,12 @@ if ($pendingOrders > 0) {
         ?>
       </p>
     </div>
+    <a href="logout.php" class="h-10 px-4 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition flex items-center gap-2">
+      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" />
+      </svg>
+      Logout
+    </a>
     <div class="relative">
       <button id="notificationBtn" class="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 relative hover:bg-slate-200 transition">
         <?php if ($totalNotifications > 0): ?>
