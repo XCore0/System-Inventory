@@ -3,7 +3,7 @@
 -- https://www.phpmyadmin.net/
 --
 -- Host: 127.0.0.1
--- Generation Time: Dec 10, 2025 at 07:37 PM
+-- Generation Time: Dec 10, 2025 at 08:22 PM
 -- Server version: 10.4.32-MariaDB
 -- PHP Version: 8.2.12
 
@@ -73,7 +73,7 @@ CREATE TABLE `products` (
 
 INSERT INTO `products` (`id`, `category_id`, `supplier_id`, `sku`, `name`, `brand`, `model`, `processor`, `ram`, `storage`, `description`, `price`, `stock`, `status`, `created_at`) VALUES
 (1, 1, 1, 'SKU-LEN-L5P', 'Lenovo Legion 5 Pro', 'Lenovo', 'Gen 12', 'Intel Core i7-13650H', '16GB', '512GB SSD', 'Gaming laptop', 25000000.00, 6, 'active', '2025-12-10 15:41:16'),
-(2, 1, 2, 'SKU-MSI-DR16', 'MSI Dragon 16', 'MSI', 'Dragon 16', 'Intel Core i7-13700H', '16GB', '1TB SSD', 'Creator laptop', 24000000.00, 6, 'active', '2025-12-10 15:41:16'),
+(2, 1, 2, 'SKU-MSI-DR16', 'MSI Dragon 16', 'MSI', 'Dragon 16', 'Intel Core i7-13700H', '16GB', '1TB SSD', 'Creator laptop', 24000000.00, 0, 'active', '2025-12-10 15:41:16'),
 (3, 1, 3, 'SKU-GIGA-A16', 'Gigabyte AERO 16', 'Gigabyte', 'OLED Creator', 'Intel Core i9-13900H', '32GB', '1TB SSD', 'OLED Creator laptop', 40000000.00, 0, 'active', '2025-12-10 15:41:16');
 
 -- --------------------------------------------------------
@@ -147,7 +147,8 @@ INSERT INTO `sales_orders` (`id`, `code`, `customer_name`, `order_date`, `status
 (1, 'SO-5001', 'PT Mandiri Jaya', '2025-01-09', 'shipped', '2025-12-10 15:41:16'),
 (2, 'SO-5002', 'CV Sinar Abadi', '2025-01-10', 'shipped', '2025-12-10 15:41:16'),
 (3, 'SO-20251210-75ED44', 'PT Mandiri Jaya', '2025-12-10', 'shipped', '2025-12-10 18:14:15'),
-(5, 'SO-20251210-E1AC7F', 'PT Mandiri Jaya', '2025-12-10', 'shipped', '2025-12-10 18:19:58');
+(5, 'SO-20251210-E1AC7F', 'PT Mandiri Jaya', '2025-12-10', 'shipped', '2025-12-10 18:19:58'),
+(6, 'SO-20251210-AB840B', 'Yuzki', '2025-12-01', 'paid', '2025-12-10 18:52:10');
 
 -- --------------------------------------------------------
 
@@ -173,7 +174,8 @@ INSERT INTO `sales_order_items` (`id`, `sales_order_id`, `product_id`, `qty`, `p
 (3, 2, 2, 1, 24000000.00),
 (4, 3, 1, 2, 25000000.00),
 (5, 5, 3, 3, 40000000.00),
-(6, 5, 2, 6, 24000000.00);
+(6, 5, 2, 6, 24000000.00),
+(7, 6, 2, 6, 24000000.00);
 
 -- --------------------------------------------------------
 
@@ -204,7 +206,8 @@ INSERT INTO `stock_moves` (`id`, `product_id`, `move_type`, `reference`, `qty`, 
 (6, 2, 'out', 'SO-5002', 1, 'Sold to CV Sinar Abadi', '2025-12-10 15:41:16'),
 (7, 1, 'out', 'SO-3', 2, 'Sales order 3', '2025-12-10 18:15:36'),
 (8, 3, 'out', 'SO-5', 3, 'Sales order 5', '2025-12-10 18:22:28'),
-(9, 2, 'out', 'SO-5', 6, 'Sales order 5', '2025-12-10 18:22:28');
+(9, 2, 'out', 'SO-5', 6, 'Sales order 5', '2025-12-10 18:22:28'),
+(10, 2, 'out', 'SO-6', 6, 'Sales order 6', '2025-12-10 18:52:22');
 
 -- --------------------------------------------------------
 
@@ -254,7 +257,7 @@ CREATE TABLE `users` (
 --
 
 INSERT INTO `users` (`id`, `name`, `email`, `password`, `role`, `created_at`) VALUES
-(1, 'Administrator', 'admin@example.com', '$2y$10$R1ngYG9lH45J6w5nUoQODuyfTRxhXFUujACWF/k1LYInjtZFl/Jza', 'admin', '2025-12-10 15:41:16');
+(3, 'Admin Laptop', 'admin@laptop.com', '$2y$10$dT22j3XDoP3j/tP6vdX0qeecCnwPRtpoUL0wXGNVlHpuU8bWo405y', 'admin', '2025-12-10 19:10:27');
 
 --
 -- Indexes for dumped tables
@@ -358,19 +361,19 @@ ALTER TABLE `purchase_order_items`
 -- AUTO_INCREMENT for table `sales_orders`
 --
 ALTER TABLE `sales_orders`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=6;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
 
 --
 -- AUTO_INCREMENT for table `sales_order_items`
 --
 ALTER TABLE `sales_order_items`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=7;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=8;
 
 --
 -- AUTO_INCREMENT for table `stock_moves`
 --
 ALTER TABLE `stock_moves`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=10;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=11;
 
 --
 -- AUTO_INCREMENT for table `suppliers`
@@ -382,7 +385,7 @@ ALTER TABLE `suppliers`
 -- AUTO_INCREMENT for table `users`
 --
 ALTER TABLE `users`
-  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=2;
+  MODIFY `id` int(10) UNSIGNED NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=4;
 
 --
 -- Constraints for dumped tables
