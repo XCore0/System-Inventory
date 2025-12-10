@@ -55,11 +55,22 @@ $lowStockCount = (int)$pdo->query('SELECT COUNT(*) FROM products WHERE stock <= 
 
 <div class="mt-auto px-4 pb-6 pt-10">
     <div class="flex items-center gap-3 rounded-2xl bg-slate-100 px-4 py-4">
-        <div class="h-10 w-10 rounded-full bg-gradient-to-br from-sky-500 to-indigo-500 text-white font-semibold flex items-center justify-center">A</div>
-        <div>
-            <div class="text-sm font-semibold text-slate-800">Admin User</div>
-            <div class="text-xs text-slate-500">admin@inventory.com</div>
+
+        <div class="h-10 w-10 rounded-full bg-gradient-to-br from-sky-500 to-indigo-500 
+                    text-white font-semibold flex items-center justify-center">
+            <?php echo strtoupper(substr($_SESSION['user_name'], 0, 1)); ?>
         </div>
+
+        <div>
+            <div class="text-sm font-semibold text-slate-800">
+                <?php echo htmlspecialchars($_SESSION['user_name']); ?>
+            </div>
+            <div class="text-xs text-slate-500">
+                <?php echo htmlspecialchars($_SESSION['user_email']); ?>
+            </div>
+        </div>
+
     </div>
 </div>
+
 
