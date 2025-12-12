@@ -7,6 +7,23 @@ $totalProducts = (int)$pdo->query('SELECT COUNT(*) FROM products')->fetchColumn(
 $totalStock = (int)$pdo->query('SELECT COALESCE(SUM(stock), 0) FROM products')->fetchColumn();
 $totalValue = (float)$pdo->query('SELECT COALESCE(SUM(price * stock), 0) FROM products')->fetchColumn();
 $activeSuppliers = (int)$pdo->query('SELECT COUNT(*) FROM suppliers WHERE status = "active"')->fetchColumn();
+$totalSuppliers = (int)$pdo->query('SELECT COUNT(*) FROM suppliers')->fetchColumn();
+
+// Calculate percentages (using reasonable targets or relative calculations)
+// Total Products: percentage based on target of 100 products
+$productsTarget = 100;
+$productsPercentage = $totalProducts > 0 ? min(100, round(($totalProducts / $productsTarget) * 100)) : 0;
+
+// Stock Available: percentage based on target of 1000 units
+$stockTarget = 1000;
+$stockPercentage = $totalStock > 0 ? min(100, round(($totalStock / $stockTarget) * 100)) : 0;
+
+// Total Value: percentage based on target of 1 billion
+$valueTarget = 1000000000; // 1 billion
+$valuePercentage = $totalValue > 0 ? min(100, round(($totalValue / $valueTarget) * 100)) : 0;
+
+// Active Suppliers: percentage of total suppliers
+$suppliersPercentage = $totalSuppliers > 0 ? round(($activeSuppliers / $totalSuppliers) * 100) : 0;
 
 // Get low stock products (stock <= 3)
 $lowStockProducts = $pdo->query('
@@ -53,12 +70,12 @@ $recentStockMoves = $pdo->query('
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 7h7V3H3v4Zm0 14h7v-8H3v8Zm11 0h7v-5h-7v5Zm0-14v5h7V7h-7Z" />
           </svg>
         </div>
-        <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium">+<?php echo $totalProducts > 0 ? round(($totalProducts / max(1, $totalProducts - 1)) * 100) : 0; ?>%</span>
+        <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium"><?php echo $productsPercentage; ?>%</span>
       </div>
       <p class="mt-4 text-slate-500 text-sm">Total Products</p>
       <p class="text-3xl font-semibold text-slate-900"><?php echo $totalProducts; ?></p>
       <div class="mt-3 h-1.5 w-full rounded-full bg-slate-100">
-        <div class="h-full <?php echo $totalProducts > 0 ? 'w-3/4' : 'w-0'; ?> rounded-full bg-gradient-to-r from-sky-500 to-cyan-400"></div>
+        <div class="h-full rounded-full bg-gradient-to-r from-sky-500 to-cyan-400" style="width: <?php echo min(100, $productsPercentage); ?>%"></div>
       </div>
     </div>
 
@@ -69,12 +86,12 @@ $recentStockMoves = $pdo->query('
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M4 9.5 12 5l8 4.5-8 4.5-8-4.5Zm0 5L12 19l8-4.5" />
           </svg>
         </div>
-        <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium">+<?php echo $totalStock > 0 ? round(($totalStock / max(1, $totalStock - 10)) * 100) : 0; ?>%</span>
+        <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium"><?php echo $stockPercentage; ?>%</span>
       </div>
       <p class="mt-4 text-slate-500 text-sm">Stock Available</p>
       <p class="text-3xl font-semibold text-slate-900"><?php echo number_format($totalStock, 0, ',', '.'); ?></p>
       <div class="mt-3 h-1.5 w-full rounded-full bg-slate-100">
-        <div class="h-full <?php echo $totalStock > 0 ? 'w-5/6' : 'w-0'; ?> rounded-full bg-gradient-to-r from-fuchsia-500 to-rose-500"></div>
+        <div class="h-full rounded-full bg-gradient-to-r from-fuchsia-500 to-rose-500" style="width: <?php echo min(100, $stockPercentage); ?>%"></div>
       </div>
     </div>
 
@@ -85,22 +102,14 @@ $recentStockMoves = $pdo->query('
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M3 4h18M5 8h14v9a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V8Z" />
           </svg>
         </div>
-        <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium">+15%</span>
+        <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium"><?php echo $valuePercentage; ?>%</span>
       </div>
       <p class="mt-4 text-slate-500 text-sm">Total Value</p>
       <p class="text-3xl font-semibold text-slate-900">
-        <?php
-          if ($totalValue >= 1000000000) {
-            echo 'Rp ' . number_format($totalValue / 1000000000, 2, ',', '.') . 'B';
-          } elseif ($totalValue >= 1000000) {
-            echo 'Rp ' . number_format($totalValue / 1000000, 1, ',', '.') . 'M';
-          } else {
-            echo 'Rp ' . number_format($totalValue, 0, ',', '.');
-          }
-        ?>
+        <?php echo 'Rp ' . number_format($totalValue, 0, ',', '.'); ?>
       </p>
       <div class="mt-3 h-1.5 w-full rounded-full bg-slate-100">
-        <div class="h-full <?php echo $totalValue > 0 ? 'w-2/3' : 'w-0'; ?> rounded-full bg-gradient-to-r from-emerald-500 to-teal-500"></div>
+        <div class="h-full rounded-full bg-gradient-to-r from-emerald-500 to-teal-500" style="width: <?php echo min(100, $valuePercentage); ?>%"></div>
       </div>
     </div>
 
@@ -111,12 +120,12 @@ $recentStockMoves = $pdo->query('
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M19 13V5a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v8m14 0v6H5v-6m14 0H5" />
           </svg>
         </div>
-        <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium">+<?php echo $activeSuppliers; ?></span>
+        <span class="px-2 py-1 rounded-lg bg-emerald-50 text-emerald-600 text-xs font-medium"><?php echo $suppliersPercentage; ?>%</span>
       </div>
       <p class="mt-4 text-slate-500 text-sm">Active Suppliers</p>
       <p class="text-3xl font-semibold text-slate-900"><?php echo $activeSuppliers; ?></p>
       <div class="mt-3 h-1.5 w-full rounded-full bg-slate-100">
-        <div class="h-full <?php echo $activeSuppliers > 0 ? 'w-1/3' : 'w-0'; ?> rounded-full bg-gradient-to-r from-orange-500 to-amber-500"></div>
+        <div class="h-full rounded-full bg-gradient-to-r from-orange-500 to-amber-500" style="width: <?php echo min(100, $suppliersPercentage); ?>%"></div>
       </div>
     </div>
   </div>

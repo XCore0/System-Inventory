@@ -2,294 +2,234 @@
 require_once __DIR__ . '/../config/db.php';
 $pdo = getPdo();
 
-// Stock Overview
-$totalProducts = (int)$pdo->query('SELECT COUNT(*) FROM products')->fetchColumn();
-$totalStock = (int)$pdo->query('SELECT COALESCE(SUM(stock), 0) FROM products')->fetchColumn();
-$lowStockCount = (int)$pdo->query('SELECT COUNT(*) FROM products WHERE stock <= 3')->fetchColumn();
+// Stock Distribution by Brand
+$stockDistribution = $pdo->query('
+    SELECT 
+        p.brand,
+        SUM(p.stock) AS total_stock,
+        COUNT(p.id) AS product_count
+    FROM products p
+    WHERE p.brand IS NOT NULL AND p.brand != ""
+    GROUP BY p.brand
+    ORDER BY total_stock DESC
+')->fetchAll();
 
-// Top Suppliers by value
-$topSuppliers = $pdo->query('
-    SELECT s.name,
-           COUNT(DISTINCT p.id) AS product_count,
-           COALESCE(SUM(p.price * p.stock), 0) AS total_value
+$totalStockUnits = array_sum(array_column($stockDistribution, 'total_stock'));
+
+// Value Distribution by Brand
+$valueDistribution = $pdo->query('
+    SELECT 
+        p.brand,
+        SUM(p.stock * p.price) AS total_value,
+        COUNT(p.id) AS product_count
+    FROM products p
+    WHERE p.brand IS NOT NULL AND p.brand != ""
+    GROUP BY p.brand
+    ORDER BY total_value DESC
+')->fetchAll();
+
+$totalInventoryValue = array_sum(array_column($valueDistribution, 'total_value'));
+
+// Detailed Inventory Report
+$inventoryReport = $pdo->query('
+    SELECT 
+        p.id,
+        p.name,
+        p.brand,
+        p.model,
+        p.processor,
+        p.ram,
+        p.storage,
+        p.stock,
+        p.price,
+        (p.stock * p.price) AS total_value,
+        CASE 
+            WHEN p.stock > 3 THEN "Good"
+            WHEN p.stock > 0 THEN "Low"
+            ELSE "Out"
+        END AS status
+    FROM products p
+    ORDER BY p.name ASC
+')->fetchAll();
+
+$totalProducts = count($inventoryReport);
+$totalStock = array_sum(array_column($inventoryReport, 'stock'));
+$avgUnitPrice = $totalProducts > 0 ? array_sum(array_column($inventoryReport, 'price')) / $totalProducts : 0;
+$grandTotalValue = array_sum(array_column($inventoryReport, 'total_value'));
+
+// Supplier Summary
+$supplierSummary = $pdo->query('
+    SELECT 
+        s.name,
+        COUNT(DISTINCT p.id) AS product_count,
+        COALESCE(SUM(p.stock), 0) AS total_stock,
+        COALESCE(SUM(p.stock * p.price), 0) AS total_value
     FROM suppliers s
     LEFT JOIN products p ON s.id = p.supplier_id
     WHERE s.status = "active"
     GROUP BY s.id
     ORDER BY total_value DESC
-    LIMIT 5
 ')->fetchAll();
 
-// Sales Statistics
-$totalSales = (float)$pdo->query('
-    SELECT COALESCE(SUM(soi.qty * soi.price), 0)
-    FROM sales_order_items soi
-    INNER JOIN sales_orders so ON soi.sales_order_id = so.id
-    WHERE so.status IN ("paid", "shipped")
-')->fetchColumn();
+// Helper function for Indonesian Rupiah format
+function formatRupiah($amount) {
+    return 'Rp ' . number_format((float)$amount, 0, ',', '.');
+}
 
-$pendingOrders = (int)$pdo->query('SELECT COUNT(*) FROM sales_orders WHERE status = "pending"')->fetchColumn();
-$paidOrders = (int)$pdo->query('SELECT COUNT(*) FROM sales_orders WHERE status = "paid"')->fetchColumn();
-$shippedOrders = (int)$pdo->query('SELECT COUNT(*) FROM sales_orders WHERE status = "shipped"')->fetchColumn();
-
-// Top Selling Products
-$topProducts = $pdo->query('
-    SELECT p.name,
-           SUM(soi.qty) AS total_sold,
-           SUM(soi.qty * soi.price) AS total_revenue
-    FROM sales_order_items soi
-    INNER JOIN sales_orders so ON soi.sales_order_id = so.id
-    INNER JOIN products p ON soi.product_id = p.id
-    WHERE so.status IN ("paid", "shipped")
-    GROUP BY p.id
-    ORDER BY total_sold DESC
-    LIMIT 5
-')->fetchAll();
-
-// Sales by Month (last 6 months)
-$salesByMonth = $pdo->query('
-    SELECT DATE_FORMAT(so.created_at, "%Y-%m") AS month,
-           DATE_FORMAT(so.created_at, "%b %Y") AS month_label,
-           COUNT(DISTINCT so.id) AS order_count,
-           COALESCE(SUM(soi.qty * soi.price), 0) AS total_sales
-    FROM sales_orders so
-    LEFT JOIN sales_order_items soi ON so.id = soi.sales_order_id
-    WHERE so.status IN ("paid", "shipped")
-      AND so.created_at >= DATE_SUB(NOW(), INTERVAL 6 MONTH)
-    GROUP BY month
-    ORDER BY month DESC
-    LIMIT 6
-')->fetchAll();
-
-// Recent Activity (from stock_moves and sales_orders)
-$recentActivities = $pdo->query('
-    (SELECT 
-        CONCAT("Restocked ", p.name) AS activity,
-        sm.created_at,
-        CONCAT("+", sm.qty, " units") AS detail,
-        "emerald" AS color,
-        "inventory" AS link
-    FROM stock_moves sm
-    LEFT JOIN products p ON sm.product_id = p.id
-    WHERE sm.move_type = "in"
-    ORDER BY sm.created_at DESC
-    LIMIT 3)
-    UNION ALL
-    (SELECT 
-        CONCAT("Low stock: ", p.name) AS activity,
-        NOW() AS created_at,
-        CONCAT(p.stock, " units left") AS detail,
-        "rose" AS color,
-        "inventory" AS link
-    FROM products p
-    WHERE p.stock <= 3
-    ORDER BY p.stock ASC
-    LIMIT 2)
-    UNION ALL
-    (SELECT 
-        CONCAT("Sales order: ", so.code) AS activity,
-        so.created_at,
-        so.customer_name AS detail,
-        "blue" AS color,
-        "sales" AS link
-    FROM sales_orders so
-    WHERE so.status = "pending"
-    ORDER BY so.created_at DESC
-    LIMIT 2)
-    ORDER BY created_at DESC
-    LIMIT 5
-')->fetchAll();
+// Helper function for percentage
+function formatPercentage($value, $total) {
+    if ($total == 0) return '0.0%';
+    return number_format(($value / $total) * 100, 1, '.', '') . '%';
+}
 ?>
 
 <section class="flex flex-col gap-4">
   <div class="flex items-center justify-between mt-8">
     <div>
-      <h1 class="text-3xl font-semibold text-slate-900">Reports</h1>
-      <p class="text-slate-500 mt-1">Overview of stock, sales, and supplier performance.</p>
+      <h1 class="text-3xl font-semibold text-slate-900">Inventory Reports</h1>
+      <p class="text-slate-500 mt-1">Comprehensive analytics and insights</p>
     </div>
     <div class="flex items-center gap-2">
-      <a href="export-reports.php?type=csv" class="px-4 py-2 rounded-lg bg-slate-100 text-slate-700 text-sm font-semibold hover:bg-slate-200 transition">Export CSV</a>
-      <a href="export-reports.php?type=pdf" class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold shadow hover:bg-indigo-700 transition">Export PDF</a>
+      <a href="export-reports.php?type=xls" class="px-4 py-2 rounded-lg bg-indigo-600 text-white text-sm font-semibold shadow hover:bg-indigo-700 transition">Export XLS</a>
     </div>
   </div>
 
-  <div class="grid gap-4 md:grid-cols-2 lg:grid-cols-3 mt-6">
-    <!-- Stock Overview -->
-    <div class="rounded-2xl bg-white shadow-sm border border-slate-100 p-4">
-      <div class="flex items-center justify-between">
-        <p class="text-sm font-semibold text-slate-800">Stock Overview</p>
-        <span class="text-xs text-emerald-600 bg-emerald-50 px-2 py-1 rounded-full">+12%</span>
-      </div>
-      <div class="mt-3 h-2 w-full rounded-full bg-slate-100 overflow-hidden">
-        <div class="h-full <?php echo $totalProducts > 0 ? 'w-3/4' : 'w-0'; ?> rounded-full bg-gradient-to-r from-sky-500 to-cyan-400"></div>
-      </div>
-      <div class="mt-4 grid grid-cols-3 gap-2 text-sm text-slate-600">
-        <div>
-          <p class="text-xs text-slate-500">Total Products</p>
-          <p class="text-lg font-semibold text-slate-900"><?php echo $totalProducts; ?></p>
-        </div>
-        <div>
-          <p class="text-xs text-slate-500">Stock Available</p>
-          <p class="text-lg font-semibold text-slate-900"><?php echo number_format($totalStock, 0, ',', '.'); ?></p>
-        </div>
-        <div>
-          <p class="text-xs text-slate-500">Low Stock</p>
-          <p class="text-lg font-semibold text-rose-500"><?php echo $lowStockCount; ?></p>
-        </div>
-      </div>
-    </div>
-
-    <!-- Sales Overview -->
-    <div class="rounded-2xl bg-white shadow-sm border border-slate-100 p-4">
-      <div class="flex items-center justify-between">
-        <p class="text-sm font-semibold text-slate-800">Sales Overview</p>
-        <span class="text-xs text-slate-500">This Month</span>
-      </div>
-      <div class="mt-3 space-y-2">
-        <div>
-          <p class="text-xs text-slate-500">Total Sales</p>
-          <p class="text-lg font-semibold text-slate-900">
-            Rp <?php echo number_format($totalSales, 0, ',', '.'); ?>
-          </p>
-        </div>
-        <div class="grid grid-cols-3 gap-2 text-xs">
-          <div>
-            <p class="text-slate-500">Pending</p>
-            <p class="font-semibold text-yellow-600"><?php echo $pendingOrders; ?></p>
-          </div>
-          <div>
-            <p class="text-slate-500">Paid</p>
-            <p class="font-semibold text-emerald-600"><?php echo $paidOrders; ?></p>
-          </div>
-          <div>
-            <p class="text-slate-500">Shipped</p>
-            <p class="font-semibold text-blue-600"><?php echo $shippedOrders; ?></p>
-          </div>
-        </div>
-      </div>
-    </div>
-
-    <!-- Top Suppliers -->
-    <div class="rounded-2xl bg-white shadow-sm border border-slate-100 p-4">
-      <div class="flex items-center justify-between">
-        <p class="text-sm font-semibold text-slate-800">Top Suppliers</p>
-        <span class="text-xs text-slate-500">By Value</span>
-      </div>
-      <div class="mt-3 space-y-3 text-sm text-slate-700">
-        <?php foreach ($topSuppliers as $supplier): ?>
-          <div class="flex items-center justify-between">
-            <span class="truncate"><?php echo htmlspecialchars($supplier['name']); ?></span>
-            <span class="font-semibold text-slate-900">
-              <?php
-                $value = (float)$supplier['total_value'];
-                if ($value >= 1000000) {
-                  echo number_format($value / 1000000, 1, '.', '') . 'M';
-                } else {
-                  echo number_format($value / 1000, 0, '.', '') . 'K';
-                }
-              ?>
-            </span>
-          </div>
-        <?php endforeach; ?>
-        <?php if (count($topSuppliers) === 0): ?>
-          <p class="text-xs text-slate-500 text-center py-2">No data available</p>
-        <?php endif; ?>
-      </div>
-    </div>
-  </div>
-
-  <!-- Top Selling Products -->
-  <div class="rounded-2xl bg-white shadow-sm border border-slate-100 p-4">
-    <div class="flex items-center justify-between">
-      <p class="text-sm font-semibold text-slate-800">Top Selling Products</p>
-      <span class="text-xs text-slate-500">All Time</span>
-    </div>
-    <div class="mt-3 space-y-3 text-sm text-slate-700">
-      <?php if (count($topProducts) > 0): ?>
-        <?php foreach ($topProducts as $product): ?>
-          <div class="flex items-center justify-between">
-            <div class="flex-1 min-w-0">
-              <p class="font-medium text-slate-900 truncate"><?php echo htmlspecialchars($product['name']); ?></p>
-              <p class="text-xs text-slate-500"><?php echo number_format((int)$product['total_sold'], 0, ',', '.'); ?> units sold</p>
-            </div>
-            <span class="font-semibold text-slate-900 ml-4">
-              Rp <?php echo number_format((float)$product['total_revenue'], 0, ',', '.'); ?>
-            </span>
-          </div>
-        <?php endforeach; ?>
-      <?php else: ?>
-        <div class="py-4 text-center text-slate-500 text-sm">No sales data available</div>
-      <?php endif; ?>
-    </div>
-  </div>
-
-  <!-- Sales by Month -->
-  <div class="rounded-2xl bg-white shadow-sm border border-slate-100 p-4">
-    <div class="flex items-center justify-between">
-      <p class="text-sm font-semibold text-slate-800">Sales by Month</p>
-      <span class="text-xs text-slate-500">Last 6 Months</span>
-    </div>
-    <div class="mt-3 space-y-3">
-      <?php if (count($salesByMonth) > 0): ?>
-        <?php 
-        $maxSales = max(array_map(function($m) { return (float)$m['total_sales']; }, $salesByMonth));
-        foreach ($salesByMonth as $month): 
-          $salesValue = (float)$month['total_sales'];
-          $percentage = $maxSales > 0 ? ($salesValue / $maxSales) * 100 : 0;
+  <!-- Stock & Value Distribution Cards -->
+  <div class="grid gap-4 md:grid-cols-2 mt-6">
+    <!-- Stock Distribution -->
+    <div class="rounded-2xl bg-gradient-to-br from-blue-50 to-blue-100 border border-blue-200 p-6 shadow-sm">
+      <h3 class="text-lg font-semibold text-slate-900 mb-4">Stock Distribution</h3>
+      <p class="text-xs text-slate-600 mb-4">Number of units by brand</p>
+      <div class="space-y-3 max-h-96 overflow-y-auto">
+        <?php foreach ($stockDistribution as $item): 
+          $percentage = formatPercentage($item['total_stock'], $totalStockUnits);
         ?>
-          <div>
-            <div class="flex items-center justify-between mb-1">
-              <span class="text-xs font-medium text-slate-700"><?php echo htmlspecialchars($month['month_label']); ?></span>
-              <span class="text-xs font-semibold text-slate-900">
-                Rp <?php echo number_format($salesValue, 0, ',', '.'); ?>
-              </span>
+          <div class="flex items-center justify-between">
+            <div class="flex-1">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-medium text-slate-900"><?php echo htmlspecialchars($item['brand']); ?></span>
+                <span class="text-sm font-semibold text-slate-700"><?php echo number_format((int)$item['total_stock'], 0, ',', '.'); ?> units</span>
+              </div>
+              <div class="h-2 w-full rounded-full bg-blue-200 overflow-hidden">
+                <div class="h-full rounded-full bg-blue-500" style="width: <?php echo ($item['total_stock'] / $totalStockUnits) * 100; ?>%"></div>
+              </div>
+              <span class="text-xs text-slate-600 mt-1"><?php echo $percentage; ?></span>
             </div>
-            <div class="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
-              <div class="h-full rounded-full bg-gradient-to-r from-indigo-500 to-purple-500" style="width: <?php echo $percentage; ?>%"></div>
-            </div>
-            <p class="text-xs text-slate-500 mt-1"><?php echo (int)$month['order_count']; ?> orders</p>
           </div>
         <?php endforeach; ?>
-      <?php else: ?>
-        <div class="py-4 text-center text-slate-500 text-sm">No sales data available</div>
-      <?php endif; ?>
+      </div>
+    </div>
+
+    <!-- Value Distribution -->
+    <div class="rounded-2xl bg-gradient-to-br from-emerald-50 to-green-100 border border-emerald-200 p-6 shadow-sm">
+      <h3 class="text-lg font-semibold text-slate-900 mb-4">Value Distribution</h3>
+      <p class="text-xs text-slate-600 mb-4">Inventory value by brand</p>
+      <div class="space-y-3 max-h-96 overflow-y-auto">
+        <?php foreach ($valueDistribution as $item): 
+          $percentage = formatPercentage($item['total_value'], $totalInventoryValue);
+        ?>
+          <div class="flex items-center justify-between">
+            <div class="flex-1">
+              <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-medium text-slate-900"><?php echo htmlspecialchars($item['brand']); ?></span>
+                <span class="text-sm font-semibold text-slate-700"><?php echo formatRupiah($item['total_value']); ?></span>
+              </div>
+              <div class="h-2 w-full rounded-full bg-emerald-200 overflow-hidden">
+                <div class="h-full rounded-full bg-emerald-500" style="width: <?php echo ($item['total_value'] / $totalInventoryValue) * 100; ?>%"></div>
+              </div>
+              <span class="text-xs text-slate-600 mt-1"><?php echo $percentage; ?></span>
+            </div>
+          </div>
+        <?php endforeach; ?>
+      </div>
     </div>
   </div>
 
-  <!-- Recent Activity -->
-  <div class="rounded-2xl bg-white shadow-sm border border-slate-100 p-4">
-    <div class="flex items-center justify-between">
-      <p class="text-sm font-semibold text-slate-800">Recent Activity</p>
-      <span class="text-xs text-slate-500">Latest</span>
+  <!-- Detailed Inventory Report -->
+  <div class="rounded-2xl bg-white shadow-sm border border-slate-200 p-6 mt-6">
+    <h3 class="text-lg font-semibold text-slate-900 mb-4">Detailed Inventory Report</h3>
+    <div class="overflow-x-auto">
+      <table class="w-full text-sm">
+        <thead>
+          <tr class="border-b border-slate-200">
+            <th class="text-left py-3 px-4 font-semibold text-slate-700">No</th>
+            <th class="text-left py-3 px-4 font-semibold text-slate-700">Product</th>
+            <th class="text-left py-3 px-4 font-semibold text-slate-700">Brand</th>
+            <th class="text-left py-3 px-4 font-semibold text-slate-700">Specs</th>
+            <th class="text-right py-3 px-4 font-semibold text-slate-700">Stock</th>
+            <th class="text-right py-3 px-4 font-semibold text-slate-700">Unit Price</th>
+            <th class="text-right py-3 px-4 font-semibold text-slate-700">Total Value</th>
+            <th class="text-center py-3 px-4 font-semibold text-slate-700">Status</th>
+          </tr>
+        </thead>
+        <tbody>
+          <?php $no = 1; foreach ($inventoryReport as $product): 
+            $specs = trim(($product['processor'] ?? '') . '/' . ($product['ram'] ?? '') . '/' . ($product['storage'] ?? ''));
+            $statusClass = $product['status'] === 'Good' ? 'text-emerald-600' : ($product['status'] === 'Low' ? 'text-orange-600' : 'text-rose-600');
+            $statusBgClass = $product['status'] === 'Good' ? 'bg-emerald-100' : ($product['status'] === 'Low' ? 'bg-orange-100' : 'bg-rose-100');
+          ?>
+            <tr class="border-b border-slate-100 hover:bg-slate-50">
+              <td class="py-3 px-4 text-slate-600"><?php echo $no++; ?></td>
+              <td class="py-3 px-4 font-medium text-slate-900"><?php echo htmlspecialchars($product['name']); ?></td>
+              <td class="py-3 px-4 text-slate-700"><?php echo htmlspecialchars($product['brand'] ?? '-'); ?></td>
+              <td class="py-3 px-4 text-slate-600"><?php echo htmlspecialchars($specs ?: '-'); ?></td>
+              <td class="py-3 px-4 text-right text-slate-700"><?php echo number_format((int)$product['stock'], 0, ',', '.'); ?></td>
+              <td class="py-3 px-4 text-right font-medium text-slate-900"><?php echo formatRupiah($product['price']); ?></td>
+              <td class="py-3 px-4 text-right font-semibold text-slate-900"><?php echo formatRupiah($product['total_value']); ?></td>
+              <td class="py-3 px-4 text-center">
+                <?php if ($product['status'] === 'Good'): ?>
+                  <span class="inline-flex items-center justify-center w-6 h-6 rounded-full <?php echo $statusBgClass; ?> <?php echo $statusClass; ?> font-semibold text-xs">✓</span>
+                <?php elseif ($product['status'] === 'Low'): ?>
+                  <span class="inline-flex items-center justify-center w-6 h-6 rounded-full <?php echo $statusBgClass; ?> <?php echo $statusClass; ?> font-semibold text-xs">!</span>
+                <?php else: ?>
+                  <span class="inline-flex items-center justify-center w-6 h-6 rounded-full <?php echo $statusBgClass; ?> <?php echo $statusClass; ?> font-semibold text-xs">✗</span>
+                <?php endif; ?>
+              </td>
+            </tr>
+          <?php endforeach; ?>
+          <!-- Total Row -->
+          <tr class="bg-slate-50 font-semibold">
+            <td colspan="4" class="py-4 px-4 text-slate-900">Total</td>
+            <td class="py-4 px-4 text-right text-slate-900"><?php echo number_format($totalStock, 0, ',', '.'); ?></td>
+            <td class="py-4 px-4 text-right text-slate-900"><?php echo formatRupiah($avgUnitPrice); ?></td>
+            <td class="py-4 px-4 text-right text-slate-900"><?php echo formatRupiah($grandTotalValue); ?></td>
+            <td class="py-4 px-4 text-center text-slate-900"><?php echo $totalProducts; ?> products</td>
+          </tr>
+        </tbody>
+      </table>
     </div>
-    <div class="mt-3 divide-y divide-slate-100 text-sm text-slate-700">
-      <?php if (count($recentActivities) > 0): ?>
-        <?php foreach ($recentActivities as $activity): ?>
-          <div class="py-3 flex items-center justify-between hover:bg-slate-50 transition rounded-lg px-2 -mx-2">
-            <div class="flex-1 min-w-0">
-              <span class="font-medium text-slate-900"><?php echo htmlspecialchars($activity['activity']); ?></span>
-              <p class="text-xs text-slate-500 mt-0.5">
-                <?php 
-                  $createdAt = new DateTime($activity['created_at']);
-                  echo $createdAt->format('d M Y, H:i');
-                ?>
-              </p>
+    <div class="mt-4 text-sm text-slate-600">
+      <p><strong>Total:</strong> <?php echo $totalProducts; ?> products • Average Unit Price: <?php echo formatRupiah($avgUnitPrice); ?> • Total Value: <?php echo formatRupiah($grandTotalValue); ?></p>
+    </div>
+  </div>
+
+  <!-- Supplier Summary -->
+  <div class="mt-6">
+    <h3 class="text-lg font-semibold text-slate-900 mb-4">Supplier Summary</h3>
+    <div class="grid gap-4 md:grid-cols-3">
+      <?php foreach ($supplierSummary as $supplier): ?>
+        <div class="rounded-2xl bg-white shadow-sm border border-slate-200 p-6">
+          <h4 class="text-base font-semibold text-slate-900 mb-4"><?php echo htmlspecialchars($supplier['name']); ?></h4>
+          <div class="space-y-3">
+            <div class="flex items-center justify-between">
+              <span class="text-sm text-slate-600">Products</span>
+              <span class="text-sm font-semibold text-slate-900"><?php echo (int)$supplier['product_count']; ?></span>
             </div>
-            <div class="flex items-center gap-2 ml-4">
-              <span class="text-xs font-semibold <?php 
-                echo $activity['color'] === 'rose' ? 'text-rose-500' : 
-                ($activity['color'] === 'emerald' ? 'text-emerald-500' : 'text-blue-500'); 
-              ?>"><?php echo htmlspecialchars($activity['detail']); ?></span>
-              <a href="?page=<?php echo htmlspecialchars($activity['link'] ?? 'dashboard'); ?>" class="text-indigo-600 hover:text-indigo-700 text-xs">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-                </svg>
-              </a>
+            <div class="flex items-center justify-between">
+              <span class="text-sm text-slate-600">Units in Stock</span>
+              <span class="text-sm font-semibold text-slate-900"><?php echo number_format((int)$supplier['total_stock'], 0, ',', '.'); ?></span>
+            </div>
+            <div class="flex items-center justify-between pt-2 border-t border-slate-200">
+              <span class="text-sm font-medium text-slate-700">Value</span>
+              <span class="text-base font-bold text-slate-900"><?php echo formatRupiah($supplier['total_value']); ?></span>
             </div>
           </div>
-        <?php endforeach; ?>
-      <?php else: ?>
-        <div class="py-4 text-center text-slate-500 text-sm">No recent activity</div>
+        </div>
+      <?php endforeach; ?>
+      <?php if (count($supplierSummary) === 0): ?>
+        <div class="col-span-3 text-center py-8 text-slate-500">
+          <p>No supplier data available</p>
+        </div>
       <?php endif; ?>
     </div>
   </div>

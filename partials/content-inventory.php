@@ -2,12 +2,17 @@
 require_once __DIR__ . '/../config/db.php';
 $pdo = getPdo();
 
-$productErrors = [];
-$productSuccess = null;
+// Get messages from session
+$productErrors = $_SESSION['product_errors'] ?? [];
+$productSuccess = $_SESSION['product_success'] ?? null;
+
+// Clear session messages after reading
+unset($_SESSION['product_errors']);
+unset($_SESSION['product_success']);
 
 // Pagination & Search
 $page = max(1, (int)($_GET['p'] ?? 1));
-$perPage = 12;
+$perPage = 6;
 $search = trim($_GET['search'] ?? '');
 $offset = ($page - 1) * $perPage;
 
@@ -49,8 +54,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'product
             $price,
             $stock,
         ]);
-        $productSuccess = 'Produk berhasil ditambahkan.';
-        header('Location: ?page=inventory&search=' . urlencode($search));
+        $_SESSION['product_success'] = 'Produk berhasil ditambahkan.';
+        header('Location: index.php?page=inventory&search=' . urlencode($search));
         exit;
     }
 }
@@ -93,8 +98,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'product
             $stock,
             $id,
         ]);
-        $productSuccess = 'Produk berhasil diupdate.';
-        header('Location: ?page=inventory&search=' . urlencode($search) . '&p=' . $page);
+        $_SESSION['product_success'] = 'Produk berhasil diupdate.';
+        header('Location: index.php?page=inventory&search=' . urlencode($search) . '&p=' . $page);
         exit;
     }
 }
@@ -105,8 +110,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'product
     if ($id > 0) {
         $stmt = $pdo->prepare('DELETE FROM products WHERE id = ?');
         $stmt->execute([$id]);
-        $productSuccess = 'Produk berhasil dihapus.';
-        header('Location: ?page=inventory&search=' . urlencode($search) . '&p=' . $page);
+        $_SESSION['product_success'] = 'Produk berhasil dihapus.';
+        header('Location: index.php?page=inventory&search=' . urlencode($search) . '&p=' . $page);
         exit;
     }
 }
@@ -164,13 +169,29 @@ $goodStockCount = (int)$goodStockStmt->fetchColumn();
   </div>
 
   <?php if ($productSuccess): ?>
-    <div class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-3 text-sm"><?php echo htmlspecialchars($productSuccess); ?></div>
+    <div id="productSuccessNotification" class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-3 text-sm flex items-center justify-between">
+      <span><?php echo htmlspecialchars($productSuccess); ?></span>
+      <button onclick="this.parentElement.remove()" class="ml-4 text-emerald-700 hover:text-emerald-900">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
   <?php endif; ?>
   <?php if ($productErrors): ?>
-    <div class="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-4 py-3 text-sm">
-      <?php foreach ($productErrors as $err): ?>
-        <div><?php echo htmlspecialchars($err); ?></div>
-      <?php endforeach; ?>
+    <div id="productErrorNotification" class="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-4 py-3 text-sm">
+      <div class="flex items-center justify-between">
+        <div>
+          <?php foreach ($productErrors as $err): ?>
+            <div><?php echo htmlspecialchars($err); ?></div>
+          <?php endforeach; ?>
+        </div>
+        <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-rose-700 hover:text-rose-900">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
     </div>
   <?php endif; ?>
 

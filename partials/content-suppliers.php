@@ -2,12 +2,17 @@
 require_once __DIR__ . '/../config/db.php';
 $pdo = getPdo();
 
-$supplierErrors = [];
-$supplierSuccess = null;
+// Get messages from session
+$supplierErrors = $_SESSION['supplier_errors'] ?? [];
+$supplierSuccess = $_SESSION['supplier_success'] ?? null;
+
+// Clear session messages after reading
+unset($_SESSION['supplier_errors']);
+unset($_SESSION['supplier_success']);
 
 // Pagination & Search
 $page = max(1, (int)($_GET['p'] ?? 1));
-$perPage = 9;
+$perPage = 6;
 $search = trim($_GET['search'] ?? '');
 $statusFilter = $_GET['status'] ?? 'all';
 $offset = ($page - 1) * $perPage;
@@ -28,8 +33,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'supplie
     if (!$supplierErrors) {
         $stmt = $pdo->prepare('INSERT INTO suppliers (name, contact_name, email, phone, address, city, status) VALUES (?, ?, ?, ?, ?, ?, "active")');
         $stmt->execute([$name, $contact, $email, $phone, $address, $city]);
-        $supplierSuccess = 'Supplier berhasil ditambahkan.';
-        header('Location: ?page=suppliers&search=' . urlencode($search) . '&status=' . urlencode($statusFilter));
+        $_SESSION['supplier_success'] = 'Supplier berhasil ditambahkan.';
+        header('Location: index.php?page=suppliers&search=' . urlencode($search) . '&status=' . urlencode($statusFilter));
         exit;
     }
 }
@@ -51,8 +56,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'supplie
     if (!$supplierErrors && $id > 0) {
         $stmt = $pdo->prepare('UPDATE suppliers SET name = ?, contact_name = ?, email = ?, phone = ?, address = ?, city = ? WHERE id = ?');
         $stmt->execute([$name, $contact, $email, $phone, $address, $city, $id]);
-        $supplierSuccess = 'Supplier berhasil diupdate.';
-        header('Location: ?page=suppliers&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
+        $_SESSION['supplier_success'] = 'Supplier berhasil diupdate.';
+        header('Location: index.php?page=suppliers&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
         exit;
     }
 }
@@ -63,8 +68,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'supplie
     if ($id > 0) {
         $stmt = $pdo->prepare('DELETE FROM suppliers WHERE id = ?');
         $stmt->execute([$id]);
-        $supplierSuccess = 'Supplier berhasil dihapus.';
-        header('Location: ?page=suppliers&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
+        $_SESSION['supplier_success'] = 'Supplier berhasil dihapus.';
+        header('Location: index.php?page=suppliers&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
         exit;
     }
 }
@@ -119,13 +124,29 @@ $suppliers = $stmt->fetchAll();
   </div>
 
   <?php if ($supplierSuccess): ?>
-    <div class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-3 text-sm"><?php echo htmlspecialchars($supplierSuccess); ?></div>
+    <div id="supplierSuccessNotification" class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-3 text-sm flex items-center justify-between">
+      <span><?php echo htmlspecialchars($supplierSuccess); ?></span>
+      <button onclick="this.parentElement.remove()" class="ml-4 text-emerald-700 hover:text-emerald-900">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
   <?php endif; ?>
   <?php if ($supplierErrors): ?>
-    <div class="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-4 py-3 text-sm">
-      <?php foreach ($supplierErrors as $err): ?>
-        <div><?php echo htmlspecialchars($err); ?></div>
-      <?php endforeach; ?>
+    <div id="supplierErrorNotification" class="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-4 py-3 text-sm">
+      <div class="flex items-center justify-between">
+        <div>
+          <?php foreach ($supplierErrors as $err): ?>
+            <div><?php echo htmlspecialchars($err); ?></div>
+          <?php endforeach; ?>
+        </div>
+        <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-rose-700 hover:text-rose-900">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
     </div>
   <?php endif; ?>
 
@@ -233,14 +254,7 @@ $suppliers = $stmt->fetchAll();
             <div class="text-center">
               <p class="text-xs text-slate-500">Value</p>
               <p class="text-lg font-semibold text-slate-900">
-                <?php
-                  $value = (float)$sup['total_value'];
-                  if ($value >= 1000000) {
-                    echo number_format($value / 1000000, 1, '.', '') . 'M';
-                  } else {
-                    echo number_format($value / 1000, 0, '.', '') . 'K';
-                  }
-                ?>
+                <?php echo 'Rp ' . number_format((float)$sup['total_value'], 0, ',', '.'); ?>
               </p>
             </div>
           </div>
@@ -277,9 +291,12 @@ $suppliers = $stmt->fetchAll();
 
   <!-- Pagination -->
   <?php if ($totalPages > 1): ?>
-    <div class="flex items-center justify-between mt-4">
-      <div class="text-sm text-slate-600">
-        Page <span class="font-semibold text-orange-500"><?php echo $page; ?></span> of <span class="font-semibold text-slate-700"><?php echo $totalPages; ?></span>
+    <div class="flex items-center justify-between rounded-2xl bg-gradient-to-r from-orange-50 via-pink-50 to-orange-50 px-6 py-4 border border-slate-200 shadow-sm">
+      <div class="flex items-center gap-3 text-sm text-slate-700">
+        <span>Page</span>
+        <span class="px-3 py-1 rounded-full bg-orange-100 text-orange-700 font-medium"><?php echo $page; ?></span>
+        <span>of</span>
+        <span class="px-3 py-1 rounded-full bg-pink-100 text-pink-700 font-medium"><?php echo $totalPages; ?></span>
       </div>
       <div class="flex items-center gap-2">
         <a href="?page=suppliers&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo max(1, $page - 1); ?>" class="px-3 py-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 <?php echo $page <= 1 ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''; ?>">
@@ -290,8 +307,6 @@ $suppliers = $stmt->fetchAll();
         <?php
           $startPage = max(1, $page - 1);
           $endPage = min($totalPages, $page + 1);
-          if ($startPage > 1) $startPage = max(1, $page - 1);
-          if ($endPage < $totalPages) $endPage = min($totalPages, $page + 1);
           for ($i = $startPage; $i <= $endPage; $i++):
         ?>
           <a href="?page=suppliers&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo $i; ?>" class="px-4 py-2 rounded-lg <?php echo $i === $page ? 'bg-orange-500 text-white shadow' : 'bg-white border border-slate-200 hover:bg-slate-50'; ?> font-medium">

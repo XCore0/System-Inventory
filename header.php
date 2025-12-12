@@ -13,20 +13,20 @@ $totalNotifications = $lowStockCount + $pendingOrders;
 // Get notifications list
 $notifications = [];
 if ($lowStockCount > 0) {
-    $notifications[] = [
-        'type' => 'low_stock',
-        'message' => $lowStockCount . ' product' . ($lowStockCount > 1 ? 's' : '') . ' with low stock',
-        'count' => $lowStockCount,
-        'color' => 'rose'
-    ];
+  $notifications[] = [
+    'type' => 'low_stock',
+    'message' => $lowStockCount . ' product' . ($lowStockCount > 1 ? 's' : '') . ' with low stock',
+    'count' => $lowStockCount,
+    'color' => 'rose'
+  ];
 }
 if ($pendingOrders > 0) {
-    $notifications[] = [
-        'type' => 'pending_order',
-        'message' => $pendingOrders . ' pending sales order' . ($pendingOrders > 1 ? 's' : ''),
-        'count' => $pendingOrders,
-        'color' => 'yellow'
-    ];
+  $notifications[] = [
+    'type' => 'pending_order',
+    'message' => $pendingOrders . ' pending sales order' . ($pendingOrders > 1 ? 's' : ''),
+    'count' => $pendingOrders,
+    'color' => 'yellow'
+  ];
 }
 ?>
 
@@ -41,26 +41,41 @@ if ($pendingOrders > 0) {
     </form>
   </div>
   <div class="flex items-center gap-3">
-    <div class="px-4 py-3 rounded-xl bg-emerald-500 text-white shadow-md min-w-[140px] text-right">
-      <p class="text-sm leading-tight font-medium">Total Value</p>
-      <p class="text-lg font-semibold leading-tight">
-        <?php
-          if ($totalValue >= 1000000000) {
-            echo 'Rp ' . number_format($totalValue / 1000000000, 2, ',', '.') . 'B';
-          } elseif ($totalValue >= 1000000) {
-            echo 'Rp ' . number_format($totalValue / 1000000, 1, ',', '.') . 'M';
-          } else {
-            echo 'Rp ' . number_format($totalValue, 0, ',', '.');
-          }
-        ?>
-      </p>
+    <div class="flex items-center gap-3">
+      <div class="px-4 py-3 rounded-xl bg-gradient-to-r from-emerald-500 to-green-400 
+              text-white shadow-md min-w-[160px] flex items-center gap-3">
+
+        <!-- Icon -->
+        <svg xmlns="http://www.w3.org/2000/svg"
+          class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+          stroke="currentColor" stroke-width="2">
+          <path stroke-linecap="round" stroke-linejoin="round"
+            d="M3 17l6-6 4 4 8-8" />
+        </svg>
+
+        <!-- Text -->
+        <div class="text-left">
+          <p class="text-sm leading-tight font-medium">Total Value</p>
+          <p class="text-lg font-semibold leading-tight">
+            <?php echo 'Rp ' . number_format($totalValue, 0, ',', '.'); ?>
+          </p>
+        </div>
+
+      </div>
     </div>
-    <a href="logout.php" class="h-10 px-4 rounded-lg bg-slate-100 text-slate-700 text-sm font-medium hover:bg-slate-200 transition flex items-center gap-2">
-      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-        <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" />
+
+    <a href="logout.php"
+      class="h-10 px-5 rounded-xl bg-red-500 text-white text-sm font-medium 
+          hover:bg-red-600 transition flex items-center gap-2 shadow-sm">
+      <svg xmlns="http://www.w3.org/2000/svg"
+        class="h-4 w-4" fill="none" viewBox="0 0 24 24"
+        stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round"
+          d="M15.75 9V5.25A2.25 2.25 0 0 0 13.5 3h-6a2.25 2.25 0 0 0-2.25 2.25v13.5A2.25 2.25 0 0 0 7.5 21h6a2.25 2.25 0 0 0 2.25-2.25V15M12 9l-3 3m0 0 3 3m-3-3h12.75" />
       </svg>
       Logout
     </a>
+
     <div class="relative">
       <button id="notificationBtn" class="h-10 w-10 rounded-full bg-slate-100 flex items-center justify-center text-slate-500 relative hover:bg-slate-200 transition">
         <?php if ($totalNotifications > 0): ?>
@@ -70,7 +85,7 @@ if ($pendingOrders > 0) {
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M15 17h5l-1.4-2.8A2 2 0 0 1 18 12V9a6 6 0 1 0-12 0v3a2 2 0 0 1-.6 1.2L4 17h5m6 0v1a3 3 0 1 1-6 0v-1m6 0H9" />
         </svg>
       </button>
-      
+
       <!-- Notification Dropdown -->
       <div id="notificationDropdown" class="hidden absolute right-0 mt-2 w-80 bg-white rounded-xl shadow-lg border border-slate-200 z-50 max-h-96 overflow-y-auto">
         <div class="p-4 border-b border-slate-200">
@@ -79,7 +94,7 @@ if ($pendingOrders > 0) {
         <div class="divide-y divide-slate-100">
           <?php if (count($notifications) > 0): ?>
             <?php foreach ($notifications as $notif): ?>
-              <div class="p-4 hover:bg-slate-50 transition">
+              <div class="p-4 hover:bg-slate-50 transition <?php echo $notif['type'] === 'low_stock' ? 'low-stock-notification' : ''; ?>">
                 <div class="flex items-start gap-3">
                   <div class="h-8 w-8 rounded-lg bg-<?php echo $notif['color']; ?>-100 text-<?php echo $notif['color']; ?>-600 flex items-center justify-center flex-shrink-0">
                     <?php if ($notif['type'] === 'low_stock'): ?>
@@ -96,12 +111,19 @@ if ($pendingOrders > 0) {
                     <p class="text-sm font-medium text-slate-900"><?php echo htmlspecialchars($notif['message']); ?></p>
                     <p class="text-xs text-slate-500 mt-1">
                       <?php if ($notif['type'] === 'low_stock'): ?>
-                        <a href="?page=inventory" class="text-indigo-600 hover:text-indigo-700">View inventory →</a>
+                        <a href="index.php?page=inventory" class="text-indigo-600 hover:text-indigo-700">View inventory →</a>
                       <?php else: ?>
-                        <a href="?page=sales" class="text-indigo-600 hover:text-indigo-700">View sales →</a>
+                        <a href="index.php?page=sales" class="text-indigo-600 hover:text-indigo-700">View sales →</a>
                       <?php endif; ?>
                     </p>
                   </div>
+                  <?php if ($notif['type'] !== 'low_stock'): ?>
+                    <button onclick="this.closest('.p-4').remove()" class="ml-2 text-slate-400 hover:text-slate-600">
+                      <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                      </svg>
+                    </button>
+                  <?php endif; ?>
                 </div>
               </div>
             <?php endforeach; ?>
@@ -119,13 +141,13 @@ if ($pendingOrders > 0) {
 <script>
   const notificationBtn = document.getElementById('notificationBtn');
   const notificationDropdown = document.getElementById('notificationDropdown');
-  
+
   if (notificationBtn && notificationDropdown) {
     notificationBtn.addEventListener('click', (e) => {
       e.stopPropagation();
       notificationDropdown.classList.toggle('hidden');
     });
-    
+
     document.addEventListener('click', (e) => {
       if (!notificationBtn.contains(e.target) && !notificationDropdown.contains(e.target)) {
         notificationDropdown.classList.add('hidden');
@@ -137,10 +159,10 @@ if ($pendingOrders > 0) {
   const headerSearchForm = document.getElementById('headerSearchForm');
   const headerSearchInput = document.getElementById('headerSearchInput');
   const headerSearchPage = document.getElementById('headerSearchPage');
-  
+
   if (headerSearchForm && headerSearchInput && headerSearchPage) {
     const currentPage = headerSearchPage.value;
-    
+
     // If on dashboard or reports, redirect to inventory when searching
     if (currentPage === 'dashboard' || currentPage === 'reports') {
       headerSearchForm.addEventListener('submit', function(e) {
@@ -151,7 +173,7 @@ if ($pendingOrders > 0) {
         }
       });
     }
-    
+
     // Auto-submit on Enter key
     headerSearchInput.addEventListener('keypress', function(e) {
       if (e.key === 'Enter') {

@@ -39,6 +39,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 // Set remember me cookie if checked
                 if ($remember) {
                     setcookie('remember_token', base64_encode($user['id'] . ':' . $user['email']), time() + (86400 * 30), '/'); // 30 days
+                } else {
+                    // Delete remember me cookie if not checked
+                    if (isset($_COOKIE['remember_token'])) {
+                        setcookie('remember_token', '', time() - 3600, '/');
+                    }
                 }
 
                 header('Location: index.php');
@@ -152,10 +157,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 type="email"
                                 id="email"
                                 name="email"
-                                value="admin@laptop.com"
                                 required
                                 class="w-full pl-12 pr-4 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-                                placeholder="Enter your email">
+                                placeholder="Enter your email"
+                                autocomplete="off">
                         </div>
                     </div>
 
@@ -172,10 +177,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                                 type="password"
                                 id="password"
                                 name="password"
-                                value="admin123"
                                 required
                                 class="w-full pl-12 pr-12 py-3 bg-slate-50 border border-slate-200 rounded-xl text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent transition"
-                                placeholder="Enter your password">
+                                placeholder="Enter your password"
+                                autocomplete="off">
                             <button
                                 type="button"
                                 id="togglePassword"
@@ -225,6 +230,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         const togglePassword = document.getElementById('togglePassword');
         const passwordInput = document.getElementById('password');
         const eyeIcon = document.getElementById('eyeIcon');
+        const rememberCheckbox = document.querySelector('input[name="remember"]');
+        const emailInput = document.getElementById('email');
+
+        // Load saved credentials only if remember me was checked
+        window.addEventListener('DOMContentLoaded', function() {
+            const rememberToken = getCookie('remember_token');
+            if (rememberToken && rememberCheckbox) {
+                // If remember token exists, check remember me and fill email
+                rememberCheckbox.checked = true;
+                try {
+                    const decoded = atob(rememberToken);
+                    const parts = decoded.split(':');
+                    if (parts.length >= 2 && emailInput) {
+                        emailInput.value = parts[1];
+                    }
+                } catch (e) {
+                    // Invalid token, ignore
+                }
+            } else {
+                // Clear inputs if remember me is not checked
+                if (emailInput) emailInput.value = '';
+                if (passwordInput) passwordInput.value = '';
+            }
+        });
+
+        // Helper function to get cookie
+        function getCookie(name) {
+            const value = `; ${document.cookie}`;
+            const parts = value.split(`; ${name}=`);
+            if (parts.length === 2) return parts.pop().split(';').shift();
+            return null;
+        }
 
         if (togglePassword && passwordInput) {
             togglePassword.addEventListener('click', function() {

@@ -2,12 +2,153 @@
 require_once __DIR__ . '/../config/db.php';
 $pdo = getPdo();
 
-$salesErrors = [];
-$salesSuccess = null;
+// Get messages from session
+$salesErrors = $_SESSION['sales_errors'] ?? [];
+$salesSuccess = $_SESSION['sales_success'] ?? null;
+
+// Clear session messages after reading
+unset($_SESSION['sales_errors']);
+unset($_SESSION['sales_success']);
+
+// Function to get order details by ID
+function getOrderDetails($pdo, $orderId) {
+    try {
+        $orderStmt = $pdo->prepare('SELECT * FROM sales_orders WHERE id = ?');
+        $orderStmt->execute([$orderId]);
+        $order = $orderStmt->fetch(PDO::FETCH_ASSOC);
+        
+        if ($order) {
+            $itemsStmt = $pdo->prepare('
+                SELECT soi.*, p.name AS product_name, p.sku, p.brand
+                FROM sales_order_items soi
+                LEFT JOIN products p ON soi.product_id = p.id
+                WHERE soi.sales_order_id = ?
+                ORDER BY soi.id
+            ');
+            $itemsStmt->execute([$orderId]);
+            $order['items'] = $itemsStmt->fetchAll(PDO::FETCH_ASSOC);
+        }
+        
+        return $order;
+    } catch (Exception $e) {
+        error_log('Error in getOrderDetails: ' . $e->getMessage());
+        return false;
+    }
+}
+
+// Handle AJAX request for products list
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax']) && $_GET['ajax'] === 'get_products') {
+    // Clear any previous output
+    if (ob_get_level()) {
+        ob_clean();
+    }
+    
+    try {
+        $products = $pdo->query('SELECT id, name, sku, brand, price, stock FROM products WHERE stock > 0 ORDER BY name')->fetchAll(PDO::FETCH_ASSOC);
+        
+        // Ensure price is properly formatted as float
+        foreach ($products as &$product) {
+            $product['price'] = (float)$product['price'];
+            $product['stock'] = (int)$product['stock'];
+        }
+        
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => true,
+            'products' => $products
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    } catch (Exception $e) {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => false,
+            'message' => 'Error loading products: ' . $e->getMessage()
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
+
+// Handle AJAX request for order details
+if ($_SERVER['REQUEST_METHOD'] === 'GET' && isset($_GET['ajax']) && $_GET['ajax'] === 'order_detail') {
+    // Clear any previous output
+    if (ob_get_level()) {
+        ob_clean();
+    }
+    
+    $orderId = (int)($_GET['order_id'] ?? 0);
+    if ($orderId > 0) {
+        try {
+            $order = getOrderDetails($pdo, $orderId);
+            if ($order) {
+                $statusColors = [
+                    'pending' => 'bg-yellow-100 text-yellow-700',
+                    'paid' => 'bg-emerald-100 text-emerald-700',
+                    'shipped' => 'bg-blue-100 text-blue-700',
+                    'cancelled' => 'bg-rose-100 text-rose-700'
+                ];
+                $statusColor = $statusColors[$order['status']] ?? 'bg-slate-100 text-slate-700';
+                
+                // Convert items to array format
+                $orderData = [
+                    'id' => (int)$order['id'],
+                    'code' => $order['code'] ?? '',
+                    'customer_name' => $order['customer_name'] ?? '',
+                    'order_date' => $order['order_date'] ?? date('Y-m-d'),
+                    'status' => $order['status'] ?? 'pending',
+                    'created_at' => $order['created_at'] ?? null,
+                    'items' => []
+                ];
+                
+                if (isset($order['items']) && is_array($order['items'])) {
+                    foreach ($order['items'] as $item) {
+                        $orderData['items'][] = [
+                            'id' => (int)($item['id'] ?? 0),
+                            'product_id' => (int)($item['product_id'] ?? 0),
+                            'product_name' => $item['product_name'] ?? 'Unknown Product',
+                            'qty' => (int)($item['qty'] ?? 0),
+                            'price' => (float)($item['price'] ?? 0),
+                            'sku' => $item['sku'] ?? '',
+                            'brand' => $item['brand'] ?? ''
+                        ];
+                    }
+                }
+                
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode([
+                    'success' => true,
+                    'order' => $orderData,
+                    'statusColor' => $statusColor
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            } else {
+                header('Content-Type: application/json; charset=utf-8');
+                echo json_encode([
+                    'success' => false,
+                    'message' => 'Order not found'
+                ], JSON_UNESCAPED_UNICODE);
+                exit;
+            }
+        } catch (Exception $e) {
+            header('Content-Type: application/json; charset=utf-8');
+            echo json_encode([
+                'success' => false,
+                'message' => 'Error loading order: ' . $e->getMessage()
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+    } else {
+        header('Content-Type: application/json; charset=utf-8');
+        echo json_encode([
+            'success' => false,
+            'message' => 'Invalid order ID'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
 
 // Pagination & Search
 $page = max(1, (int)($_GET['p'] ?? 1));
-$perPage = 10;
+$perPage = 6;
 $search = trim($_GET['search'] ?? '');
 $statusFilter = $_GET['status'] ?? 'all';
 $offset = ($page - 1) * $perPage;
@@ -27,14 +168,78 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'sales_c
         $stmt->execute([$code, $customerName, $orderDate]);
         $newOrderId = $pdo->lastInsertId();
         
+        // Set success message in session
+        $_SESSION['sales_success'] = 'Item berhasil ditambahkan ke order.';
+        
         // Clear output buffer and redirect
         ob_clean();
-        header('Location: ?page=sales&id=' . $newOrderId . '&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
+        header('Location: index.php?page=sales&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
         exit;
     }
 }
 
-// Add Item to Sales Order
+// Handle AJAX request for add item
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['ajax']) && $_GET['ajax'] === 'add_item') {
+    // Clear any previous output
+    if (ob_get_level()) {
+        ob_clean();
+    }
+    
+    $salesOrderId = (int)($_POST['sales_order_id'] ?? 0);
+    $productId = (int)($_POST['product_id'] ?? 0);
+    $qty = (int)($_POST['qty'] ?? 0);
+    $price = (float)($_POST['price'] ?? 0);
+    
+    header('Content-Type: application/json; charset=utf-8');
+    
+    if ($salesOrderId <= 0 || $productId <= 0) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Data tidak valid.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    
+    if ($qty <= 0) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Quantity harus lebih dari 0.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    
+    // Check stock
+    $stockStmt = $pdo->prepare('SELECT stock FROM products WHERE id = ?');
+    $stockStmt->execute([$productId]);
+    $product = $stockStmt->fetch();
+    
+    if ($product && $qty > $product['stock']) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Stock tidak mencukupi. Stock tersedia: ' . $product['stock']
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare('INSERT INTO sales_order_items (sales_order_id, product_id, qty, price) VALUES (?, ?, ?, ?)');
+        $stmt->execute([$salesOrderId, $productId, $qty, $price]);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => 'Item berhasil ditambahkan ke order.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Error: ' . $e->getMessage()
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
+
+// Add Item to Sales Order (non-AJAX fallback)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'sales_add_item') {
     $salesOrderId = (int)($_POST['sales_order_id'] ?? 0);
     $productId = (int)($_POST['product_id'] ?? 0);
@@ -61,9 +266,91 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'sales_a
         $stmt = $pdo->prepare('INSERT INTO sales_order_items (sales_order_id, product_id, qty, price) VALUES (?, ?, ?, ?)');
         $stmt->execute([$salesOrderId, $productId, $qty, $price]);
         
+        // Set success message in session
+        $_SESSION['sales_success'] = 'Item berhasil ditambahkan ke order.';
+        
         // Clear output buffer and redirect
         ob_clean();
-        header('Location: ?page=sales&id=' . $salesOrderId . '&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
+        header('Location: index.php?page=sales&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
+        exit;
+    }
+}
+
+// Handle AJAX request for complete order
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['ajax']) && $_GET['ajax'] === 'complete_order') {
+    // Clear any previous output
+    if (ob_get_level()) {
+        ob_clean();
+    }
+    
+    $orderId = (int)($_POST['order_id'] ?? 0);
+    
+    header('Content-Type: application/json; charset=utf-8');
+    
+    if ($orderId <= 0) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Order ID tidak valid.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    
+    try {
+        // Check if order has items
+        $itemsStmt = $pdo->prepare('SELECT COUNT(*) FROM sales_order_items WHERE sales_order_id = ?');
+        $itemsStmt->execute([$orderId]);
+        $itemCount = (int)$itemsStmt->fetchColumn();
+        
+        if ($itemCount === 0) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'Order harus memiliki minimal 1 item sebelum diselesaikan.'
+            ], JSON_UNESCAPED_UNICODE);
+            exit;
+        }
+        
+        // Update status to paid
+        $updateStatusStmt = $pdo->prepare('UPDATE sales_orders SET status = "paid" WHERE id = ?');
+        $updateStatusStmt->execute([$orderId]);
+        
+        // Reduce stock
+        $pdo->beginTransaction();
+        try {
+            $itemsStmt = $pdo->prepare('SELECT product_id, qty FROM sales_order_items WHERE sales_order_id = ?');
+            $itemsStmt->execute([$orderId]);
+            $items = $itemsStmt->fetchAll();
+            
+            foreach ($items as $item) {
+                // Reduce stock
+                $updateStmt = $pdo->prepare('UPDATE products SET stock = stock - ? WHERE id = ?');
+                $updateStmt->execute([$item['qty'], $item['product_id']]);
+                
+                // Log stock move
+                $logStmt = $pdo->prepare('INSERT INTO stock_moves (product_id, move_type, reference, qty, note) VALUES (?, "out", ?, ?, ?)');
+                $logStmt->execute([
+                    $item['product_id'],
+                    'SO-' . $orderId,
+                    $item['qty'],
+                    'Sales order ' . $orderId
+                ]);
+            }
+            
+            $pdo->commit();
+        } catch (Exception $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+        
+        echo json_encode([
+            'success' => true,
+            'message' => 'Order berhasil diselesaikan dan stock telah dikurangi.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Error: ' . $e->getMessage()
+        ], JSON_UNESCAPED_UNICODE);
         exit;
     }
 }
@@ -111,10 +398,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'sales_u
                 $updateStatusStmt->execute([$newStatus, $id]);
                 
                 $pdo->commit();
-                $salesSuccess = 'Status berhasil diupdate.';
+                $_SESSION['sales_success'] = 'Status berhasil diupdate.';
             } catch (Exception $e) {
                 $pdo->rollBack();
-                $salesErrors[] = 'Error: ' . $e->getMessage();
+                $_SESSION['sales_errors'] = ['Error: ' . $e->getMessage()];
             }
         } else {
             // If cancelling paid order, restore stock
@@ -139,31 +426,68 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'sales_u
                         $updateStatusStmt->execute([$newStatus, $id]);
                         
                         $pdo->commit();
-                        $salesSuccess = 'Order dibatalkan dan stock dikembalikan.';
+                        $_SESSION['sales_success'] = 'Order dibatalkan dan stock dikembalikan.';
                     } catch (Exception $e) {
                         $pdo->rollBack();
-                        $salesErrors[] = 'Error: ' . $e->getMessage();
+                        $_SESSION['sales_errors'] = ['Error: ' . $e->getMessage()];
                     }
                 } else {
                     $updateStatusStmt = $pdo->prepare('UPDATE sales_orders SET status = ? WHERE id = ?');
                     $updateStatusStmt->execute([$newStatus, $id]);
-                    $salesSuccess = 'Status berhasil diupdate.';
+                    $_SESSION['sales_success'] = 'Status berhasil diupdate.';
                 }
             } else {
                 $updateStatusStmt = $pdo->prepare('UPDATE sales_orders SET status = ? WHERE id = ?');
                 $updateStatusStmt->execute([$newStatus, $id]);
-                $salesSuccess = 'Status berhasil diupdate.';
+                $_SESSION['sales_success'] = 'Status berhasil diupdate.';
             }
         }
         
         // Clear output buffer and redirect
         ob_clean();
-        header('Location: ?page=sales&id=' . $id . '&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
+        header('Location: index.php?page=sales&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
         exit;
     }
 }
 
-// Delete Item from Sales Order
+// Handle AJAX request for delete item
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_GET['ajax']) && $_GET['ajax'] === 'delete_item') {
+    // Clear any previous output
+    if (ob_get_level()) {
+        ob_clean();
+    }
+    
+    $itemId = (int)($_POST['item_id'] ?? 0);
+    
+    header('Content-Type: application/json; charset=utf-8');
+    
+    if ($itemId <= 0) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Item ID tidak valid.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+    
+    try {
+        $stmt = $pdo->prepare('DELETE FROM sales_order_items WHERE id = ?');
+        $stmt->execute([$itemId]);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => 'Item berhasil dihapus dari order.'
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Error: ' . $e->getMessage()
+        ], JSON_UNESCAPED_UNICODE);
+        exit;
+    }
+}
+
+// Delete Item from Sales Order (non-AJAX fallback)
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'sales_delete_item') {
     $itemId = (int)($_POST['item_id'] ?? 0);
     $salesOrderId = (int)($_POST['sales_order_id'] ?? 0);
@@ -172,9 +496,53 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'sales_d
         $stmt = $pdo->prepare('DELETE FROM sales_order_items WHERE id = ?');
         $stmt->execute([$itemId]);
         
+        $_SESSION['sales_success'] = 'Item berhasil dihapus dari order.';
+        
         // Clear output buffer and redirect
         ob_clean();
-        header('Location: ?page=sales&id=' . $salesOrderId . '&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
+        header('Location: index.php?page=sales&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
+        exit;
+    }
+}
+
+// Delete Sales Order
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['form'] ?? '') === 'sales_delete_order') {
+    $id = (int)($_POST['id'] ?? 0);
+    
+    if ($id > 0) {
+        // Check if order is paid - if so, restore stock
+        $orderStmt = $pdo->prepare('SELECT status FROM sales_orders WHERE id = ?');
+        $orderStmt->execute([$id]);
+        $order = $orderStmt->fetch();
+        
+        if ($order && $order['status'] === 'paid') {
+            $pdo->beginTransaction();
+            try {
+                $itemsStmt = $pdo->prepare('SELECT product_id, qty FROM sales_order_items WHERE sales_order_id = ?');
+                $itemsStmt->execute([$id]);
+                $items = $itemsStmt->fetchAll();
+                
+                foreach ($items as $item) {
+                    $updateStmt = $pdo->prepare('UPDATE products SET stock = stock + ? WHERE id = ?');
+                    $updateStmt->execute([$item['qty'], $item['product_id']]);
+                }
+                
+                $pdo->commit();
+            } catch (Exception $e) {
+                $pdo->rollBack();
+                $salesErrors[] = 'Error: ' . $e->getMessage();
+            }
+        }
+        
+        // Delete order (cascade will delete items)
+        $stmt = $pdo->prepare('DELETE FROM sales_orders WHERE id = ?');
+        $stmt->execute([$id]);
+        
+        $_SESSION['sales_success'] = 'Order berhasil dihapus.';
+        
+        // Clear output buffer and redirect
+        ob_clean();
+        header('Location: index.php?page=sales&search=' . urlencode($search) . '&status=' . urlencode($statusFilter) . '&p=' . $page);
         exit;
     }
 }
@@ -217,28 +585,6 @@ $stmt = $pdo->prepare($query);
 $stmt->execute(array_merge($params, [$perPage, $offset]));
 $salesOrders = $stmt->fetchAll();
 
-// Get selected order details if ID provided
-$selectedOrder = null;
-$selectedOrderItems = [];
-if (isset($_GET['id'])) {
-    $orderId = (int)$_GET['id'];
-    $orderStmt = $pdo->prepare('SELECT * FROM sales_orders WHERE id = ?');
-    $orderStmt->execute([$orderId]);
-    $selectedOrder = $orderStmt->fetch();
-    
-    if ($selectedOrder) {
-        $itemsStmt = $pdo->prepare('
-            SELECT soi.*, p.name AS product_name, p.sku, p.brand
-            FROM sales_order_items soi
-            LEFT JOIN products p ON soi.product_id = p.id
-            WHERE soi.sales_order_id = ?
-            ORDER BY soi.id
-        ');
-        $itemsStmt->execute([$orderId]);
-        $selectedOrderItems = $itemsStmt->fetchAll();
-    }
-}
-
 // Get products for dropdown
 $products = $pdo->query('SELECT id, name, sku, brand, price, stock FROM products WHERE stock > 0 ORDER BY name')->fetchAll();
 ?>
@@ -253,13 +599,29 @@ $products = $pdo->query('SELECT id, name, sku, brand, price, stock FROM products
   </div>
 
   <?php if ($salesSuccess): ?>
-    <div class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-3 text-sm"><?php echo htmlspecialchars($salesSuccess); ?></div>
+    <div id="salesSuccessNotification" class="rounded-lg border border-emerald-200 bg-emerald-50 text-emerald-700 px-4 py-3 text-sm flex items-center justify-between">
+      <span><?php echo htmlspecialchars($salesSuccess); ?></span>
+      <button onclick="this.parentElement.remove()" class="ml-4 text-emerald-700 hover:text-emerald-900">
+        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+        </svg>
+      </button>
+    </div>
   <?php endif; ?>
   <?php if ($salesErrors): ?>
-    <div class="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-4 py-3 text-sm">
-      <?php foreach ($salesErrors as $err): ?>
-        <div><?php echo htmlspecialchars($err); ?></div>
-      <?php endforeach; ?>
+    <div id="salesErrorNotification" class="rounded-lg border border-rose-200 bg-rose-50 text-rose-700 px-4 py-3 text-sm">
+      <div class="flex items-center justify-between">
+        <div>
+          <?php foreach ($salesErrors as $err): ?>
+            <div><?php echo htmlspecialchars($err); ?></div>
+          <?php endforeach; ?>
+        </div>
+        <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-rose-700 hover:text-rose-900">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
     </div>
   <?php endif; ?>
 
@@ -284,191 +646,165 @@ $products = $pdo->query('SELECT id, name, sku, brand, price, stock FROM products
     </select>
   </div>
 
-  <div class="grid gap-4 md:grid-cols-2">
-    <!-- Sales Orders List -->
-    <div class="space-y-3">
-      <h2 class="text-lg font-semibold text-slate-900">Sales Orders</h2>
-      <?php foreach ($salesOrders as $order): ?>
-        <?php
-          $statusColors = [
-            'pending' => 'bg-yellow-100 text-yellow-700',
-            'paid' => 'bg-emerald-100 text-emerald-700',
-            'shipped' => 'bg-blue-100 text-blue-700',
-            'cancelled' => 'bg-rose-100 text-rose-700'
-          ];
-          $statusColor = $statusColors[$order['status']] ?? 'bg-slate-100 text-slate-700';
-        ?>
-        <a href="?page=sales&id=<?php echo $order['id']; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo $page; ?><?php echo isset($_GET['id']) && $_GET['id'] == $order['id'] ? '' : ''; ?>" class="block rounded-xl border <?php echo $selectedOrder && $selectedOrder['id'] == $order['id'] ? 'border-emerald-500 bg-emerald-50' : 'border-slate-200 bg-white'; ?> p-4 hover:shadow-md transition">
-          <div class="flex items-start justify-between">
-            <div class="flex-1">
-              <div class="flex items-center gap-2 mb-1">
-                <span class="text-sm font-semibold text-slate-900"><?php echo htmlspecialchars($order['code']); ?></span>
-                <span class="text-xs px-2 py-0.5 rounded-full <?php echo $statusColor; ?>"><?php echo ucfirst($order['status']); ?></span>
+  <div class="space-y-3">
+    <h2 class="text-lg font-semibold text-slate-900">Sales Orders</h2>
+    <?php foreach ($salesOrders as $order): ?>
+      <?php
+        $statusColors = [
+          'pending' => 'bg-yellow-100 text-yellow-700',
+          'paid' => 'bg-emerald-100 text-emerald-700',
+          'shipped' => 'bg-blue-100 text-blue-700',
+          'cancelled' => 'bg-rose-100 text-rose-700'
+        ];
+        $statusColor = $statusColors[$order['status']] ?? 'bg-slate-100 text-slate-700';
+      ?>
+      <div class="rounded-xl border border-slate-200 bg-white p-4 hover:shadow-md transition">
+        <!-- Top Section: Order Code and Status -->
+        <div class="flex items-center gap-2 mb-3">
+          <span class="text-sm font-semibold text-slate-900"><?php echo htmlspecialchars($order['code']); ?></span>
+          <span class="text-xs px-2 py-0.5 rounded-full <?php echo $statusColor; ?>"><?php echo ucfirst($order['status']); ?></span>
+        </div>
+        
+        <!-- Middle Section: Details with Icons -->
+        <div class="border-t border-b border-slate-200 py-3 mb-3">
+          <div class="grid grid-cols-3 gap-4">
+            <!-- Customer -->
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded bg-blue-100 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+                </svg>
               </div>
-              <p class="text-sm text-slate-600"><?php echo htmlspecialchars($order['customer_name']); ?></p>
-              <p class="text-xs text-slate-500 mt-1"><?php echo date('d M Y', strtotime($order['order_date'])); ?></p>
+              <div>
+                <p class="text-xs text-slate-500">Customer</p>
+                <p class="text-sm font-medium text-slate-900"><?php echo htmlspecialchars($order['customer_name']); ?></p>
+              </div>
             </div>
-            <div class="text-right">
-              <p class="text-sm font-semibold text-slate-900">Rp <?php echo number_format((float)$order['total_amount'], 0, ',', '.'); ?></p>
-              <p class="text-xs text-slate-500"><?php echo (int)$order['item_count']; ?> items</p>
+            
+            <!-- Order Date -->
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded bg-purple-100 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-purple-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+                </svg>
+              </div>
+              <div>
+                <p class="text-xs text-slate-500">Order Date</p>
+                <p class="text-sm font-medium text-slate-900"><?php echo date('d/m/Y', strtotime($order['order_date'])); ?></p>
+              </div>
+            </div>
+            
+            <!-- Items -->
+            <div class="flex items-center gap-2">
+              <div class="w-8 h-8 rounded bg-orange-100 flex items-center justify-center">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-orange-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4" />
+                </svg>
+              </div>
+              <div>
+                <p class="text-xs text-slate-500">Items</p>
+                <p class="text-sm font-medium text-slate-900"><?php echo (int)$order['item_count']; ?> items</p>
+              </div>
             </div>
           </div>
-        </a>
-      <?php endforeach; ?>
-      
-      <?php if (count($salesOrders) === 0): ?>
-        <div class="text-center py-12 text-slate-500 rounded-xl border border-slate-200 bg-white">
-          <p>Tidak ada sales order ditemukan.</p>
         </div>
-      <?php endif; ?>
-
-      <!-- Pagination -->
-      <?php if ($totalPages > 1): ?>
-        <div class="flex items-center justify-between pt-4">
-          <div class="text-sm text-slate-600">
-            Page <span class="font-semibold text-emerald-500"><?php echo $page; ?></span> of <span class="font-semibold text-slate-700"><?php echo $totalPages; ?></span>
+        
+        <!-- Bottom Section: Total, Status Dropdown, and Action Buttons -->
+        <div class="flex items-center justify-between">
+          <div class="flex items-center gap-3">
+            <span class="text-sm font-semibold text-emerald-600">Rp</span>
+            <span class="text-sm font-semibold text-slate-900"><?php echo number_format((float)$order['total_amount'], 0, ',', '.'); ?></span>
           </div>
           <div class="flex items-center gap-2">
-            <a href="?page=sales<?php echo isset($_GET['id']) ? '&id=' . (int)$_GET['id'] : ''; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo max(1, $page - 1); ?>" class="px-3 py-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 <?php echo $page <= 1 ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''; ?>">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
-              </svg>
-            </a>
-            <?php
-              $startPage = max(1, $page - 1);
-              $endPage = min($totalPages, $page + 1);
-              for ($i = $startPage; $i <= $endPage; $i++):
-            ?>
-              <a href="?page=sales<?php echo isset($_GET['id']) ? '&id=' . (int)$_GET['id'] : ''; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo $i; ?>" class="px-4 py-2 rounded-lg <?php echo $i === $page ? 'bg-emerald-500 text-white shadow' : 'bg-white border border-slate-200 hover:bg-slate-50'; ?> font-medium">
-                <?php echo $i; ?>
-              </a>
-            <?php endfor; ?>
-            <a href="?page=sales<?php echo isset($_GET['id']) ? '&id=' . (int)$_GET['id'] : ''; ?>&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo min($totalPages, $page + 1); ?>" class="px-3 py-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 <?php echo $page >= $totalPages ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''; ?>">
-              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
-              </svg>
-            </a>
-          </div>
-        </div>
-      <?php endif; ?>
-    </div>
-
-    <!-- Order Details -->
-    <div class="space-y-3">
-      <?php if ($selectedOrder): ?>
-        <div class="rounded-xl border border-slate-200 bg-white p-4">
-          <div class="flex items-center justify-between mb-4">
-            <h2 class="text-lg font-semibold text-slate-900">Order Details</h2>
-            <span class="text-xs px-2 py-1 rounded-full <?php echo $statusColors[$selectedOrder['status']] ?? 'bg-slate-100 text-slate-700'; ?>"><?php echo ucfirst($selectedOrder['status']); ?></span>
-          </div>
-          
-          <div class="space-y-2 text-sm mb-4">
-            <div class="flex justify-between">
-              <span class="text-slate-500">Order Code:</span>
-              <span class="font-semibold text-slate-900"><?php echo htmlspecialchars($selectedOrder['code']); ?></span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-500">Customer:</span>
-              <span class="font-semibold text-slate-900"><?php echo htmlspecialchars($selectedOrder['customer_name']); ?></span>
-            </div>
-            <div class="flex justify-between">
-              <span class="text-slate-500">Date:</span>
-              <span class="font-semibold text-slate-900"><?php echo date('d M Y', strtotime($selectedOrder['order_date'])); ?></span>
-            </div>
-          </div>
-
-          <!-- Items List -->
-          <div class="space-y-2 mb-4">
-            <h3 class="text-sm font-semibold text-slate-900">Items</h3>
-            <?php if (count($selectedOrderItems) > 0): ?>
-              <?php 
-                $subtotal = 0;
-                foreach ($selectedOrderItems as $item):
-                  $itemTotal = $item['qty'] * $item['price'];
-                  $subtotal += $itemTotal;
-              ?>
-                <div class="flex items-center justify-between p-2 bg-slate-50 rounded-lg text-sm">
-                  <div class="flex-1">
-                    <p class="font-medium text-slate-900"><?php echo htmlspecialchars($item['product_name']); ?></p>
-                    <p class="text-xs text-slate-500"><?php echo (int)$item['qty']; ?> x Rp <?php echo number_format($item['price'], 0, ',', '.'); ?></p>
-                  </div>
-                  <div class="text-right">
-                    <p class="font-semibold text-slate-900">Rp <?php echo number_format($itemTotal, 0, ',', '.'); ?></p>
-                    <?php if ($selectedOrder['status'] === 'pending'): ?>
-                      <form method="POST" class="inline">
-                        <input type="hidden" name="form" value="sales_delete_item">
-                        <input type="hidden" name="item_id" value="<?php echo $item['id']; ?>">
-                        <input type="hidden" name="sales_order_id" value="<?php echo $selectedOrder['id']; ?>">
-                        <button onclick="return confirm('Hapus item ini?')" class="text-xs text-rose-500 hover:text-rose-700">Hapus</button>
-                      </form>
-                    <?php endif; ?>
-                  </div>
-                </div>
-              <?php endforeach; ?>
-              
-              <div class="border-t border-slate-200 pt-2 mt-2">
-                <div class="flex justify-between text-sm font-semibold text-slate-900">
-                  <span>Total:</span>
-                  <span>Rp <?php echo number_format($subtotal, 0, ',', '.'); ?></span>
-                </div>
-              </div>
-            <?php else: ?>
-              <p class="text-sm text-slate-500 text-center py-4">Belum ada items</p>
-            <?php endif; ?>
-          </div>
-
-          <!-- Add Item Form (only for pending orders) -->
-          <?php if ($selectedOrder && $selectedOrder['status'] === 'pending'): ?>
-            <form method="POST" class="space-y-2 p-3 bg-slate-50 rounded-lg">
-              <input type="hidden" name="form" value="sales_add_item">
-              <input type="hidden" name="sales_order_id" value="<?php echo $selectedOrder['id']; ?>">
-              <div class="grid grid-cols-2 gap-2">
-                <select name="product_id" id="productSelect" required class="rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                  <option value="">Pilih Produk</option>
-                  <?php foreach ($products as $prod): ?>
-                    <option value="<?php echo $prod['id']; ?>" data-price="<?php echo $prod['price']; ?>" data-stock="<?php echo $prod['stock']; ?>">
-                      <?php echo htmlspecialchars($prod['name']); ?> (Stock: <?php echo $prod['stock']; ?>)
-                    </option>
-                  <?php endforeach; ?>
-                </select>
-                <input type="number" name="qty" id="qtyInput" min="1" required placeholder="Qty" class="rounded-lg border border-slate-200 px-3 py-2 text-sm">
-                <input type="number" name="price" id="priceInput" step="0.01" min="0" required readonly placeholder="Price" class="rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm cursor-not-allowed">
-                <button type="submit" class="rounded-lg bg-emerald-500 text-white text-sm font-semibold py-2 hover:bg-emerald-600">Add Item</button>
-              </div>
-            </form>
-          <?php endif; ?>
-
-          <!-- Status Update -->
-          <?php if ($selectedOrder['status'] !== 'cancelled'): ?>
-            <form method="POST" class="mt-4">
+            <!-- Status Dropdown -->
+            <form method="POST" class="inline" onsubmit="return confirm('Ubah status order ini?')">
               <input type="hidden" name="form" value="sales_update_status">
-              <input type="hidden" name="id" value="<?php echo $selectedOrder['id']; ?>">
-              <div class="flex gap-2">
-                <?php if ($selectedOrder['status'] === 'pending'): ?>
-                  <?php if (count($selectedOrderItems) > 0): ?>
-                    <button type="submit" name="status" value="paid" class="flex-1 rounded-lg bg-emerald-500 text-white text-sm font-semibold py-2 hover:bg-emerald-600">Mark as Paid</button>
-                  <?php else: ?>
-                    <button type="button" disabled class="flex-1 rounded-lg bg-slate-300 text-slate-500 text-sm font-semibold py-2 cursor-not-allowed">Add items first</button>
-                  <?php endif; ?>
-                  <button type="submit" name="status" value="cancelled" class="flex-1 rounded-lg bg-rose-500 text-white text-sm font-semibold py-2 hover:bg-rose-600">Cancel</button>
-                <?php elseif ($selectedOrder['status'] === 'paid'): ?>
-                  <button type="submit" name="status" value="shipped" class="flex-1 rounded-lg bg-blue-500 text-white text-sm font-semibold py-2 hover:bg-blue-600">Mark as Shipped</button>
-                  <button type="submit" name="status" value="cancelled" onclick="return confirm('Cancel order ini? Stock akan dikembalikan.')" class="flex-1 rounded-lg bg-rose-500 text-white text-sm font-semibold py-2 hover:bg-rose-600">Cancel</button>
-                <?php elseif ($selectedOrder['status'] === 'shipped'): ?>
-                  <div class="flex-1 rounded-lg bg-blue-100 text-blue-700 text-sm font-semibold py-2 text-center">Order Shipped</div>
-                <?php endif; ?>
-              </div>
+              <input type="hidden" name="id" value="<?php echo $order['id']; ?>">
+              <select name="status" onchange="this.form.submit()" class="text-xs rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-slate-700 focus:outline-none focus:ring-2 focus:ring-emerald-500">
+                <option value="pending" <?php echo $order['status'] === 'pending' ? 'selected' : ''; ?>>Pending</option>
+                <option value="paid" <?php echo $order['status'] === 'paid' ? 'selected' : ''; ?>>Paid</option>
+                <option value="shipped" <?php echo $order['status'] === 'shipped' ? 'selected' : ''; ?>>Shipped</option>
+                <option value="cancelled" <?php echo $order['status'] === 'cancelled' ? 'selected' : ''; ?>>Cancelled</option>
+              </select>
             </form>
-          <?php endif; ?>
+            
+            <!-- View Detail Button -->
+            <button onclick="openOrderDetail(<?php echo $order['id']; ?>)" class="w-8 h-8 rounded-lg bg-blue-100 hover:bg-blue-200 flex items-center justify-center transition">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-blue-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
+              </svg>
+            </button>
+            
+            <!-- Delete Button -->
+            <form method="POST" class="inline" onsubmit="return confirm('Hapus order ini? Tindakan ini tidak dapat dibatalkan.')">
+              <input type="hidden" name="form" value="sales_delete_order">
+              <input type="hidden" name="id" value="<?php echo $order['id']; ?>">
+              <button type="submit" class="w-8 h-8 rounded-lg bg-red-100 hover:bg-red-200 flex items-center justify-center transition">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                </svg>
+              </button>
+            </form>
+          </div>
         </div>
-      <?php else: ?>
-        <div class="rounded-xl border border-slate-200 bg-white p-8 text-center text-slate-500">
-          <p>Pilih sales order untuk melihat detail</p>
+      </div>
+    <?php endforeach; ?>
+      
+    <?php if (count($salesOrders) === 0): ?>
+      <div class="text-center py-12 text-slate-500 rounded-xl border border-slate-200 bg-white">
+        <p>Tidak ada sales order ditemukan.</p>
+      </div>
+    <?php endif; ?>
+
+    <!-- Pagination -->
+    <?php if ($totalPages > 1): ?>
+      <div class="flex items-center justify-between rounded-2xl bg-gradient-to-r from-emerald-50 to-green-50 px-6 py-4 border border-slate-200 shadow-sm">
+        <div class="flex items-center gap-3 text-sm text-slate-700">
+          <span>Page</span>
+          <span class="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium"><?php echo $page; ?></span>
+          <span>of</span>
+          <span class="px-3 py-1 rounded-full bg-emerald-100 text-emerald-700 font-medium"><?php echo $totalPages; ?></span>
+          <span>• Total <?php echo $totalOrders; ?> orders</span>
         </div>
-      <?php endif; ?>
+        <div class="flex items-center gap-2">
+          <a href="?page=sales&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo max(1, $page - 1); ?>" class="px-3 py-2 rounded-lg bg-slate-100 text-slate-600 hover:bg-slate-200 <?php echo $page <= 1 ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''; ?>">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7" />
+            </svg>
+          </a>
+          <?php
+            $startPage = max(1, $page - 1);
+            $endPage = min($totalPages, $page + 1);
+            for ($i = $startPage; $i <= $endPage; $i++):
+          ?>
+            <a href="?page=sales&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo $i; ?>" class="px-4 py-2 rounded-lg <?php echo $i === $page ? 'bg-emerald-500 text-white shadow' : 'bg-white border border-slate-200 hover:bg-slate-50'; ?> font-medium">
+              <?php echo $i; ?>
+            </a>
+          <?php endfor; ?>
+          <a href="?page=sales&search=<?php echo urlencode($search); ?>&status=<?php echo urlencode($statusFilter); ?>&p=<?php echo min($totalPages, $page + 1); ?>" class="px-3 py-2 rounded-lg bg-emerald-500 text-white hover:bg-emerald-600 <?php echo $page >= $totalPages ? 'opacity-50 cursor-not-allowed pointer-events-none' : ''; ?>">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7" />
+            </svg>
+          </a>
+        </div>
+      </div>
+    <?php endif; ?>
+</section>
+
+<!-- Order Detail Modal -->
+<div id="orderDetailModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center z-50">
+  <div class="bg-white w-full max-w-2xl rounded-2xl shadow-2xl border border-slate-200 overflow-hidden max-h-[90vh] overflow-y-auto">
+    <div class="px-6 py-4 bg-gradient-to-r from-emerald-500 to-teal-500 text-white flex items-center justify-between sticky top-0 z-10">
+      <h3 class="text-lg font-semibold">Order Details</h3>
+      <button id="btnCloseOrderDetail" class="text-white hover:text-slate-100 text-2xl leading-none">&times;</button>
+    </div>
+    <div id="orderDetailContent" class="p-6">
+      <!-- Content will be loaded via AJAX -->
+      <div class="text-center py-8 text-slate-500">Loading...</div>
     </div>
   </div>
-</section>
+</div>
 
 <!-- Sales Order Modal -->
 <div id="salesModal" class="fixed inset-0 bg-slate-900/60 backdrop-blur-sm hidden items-center justify-center z-40">
@@ -545,7 +881,6 @@ $products = $pdo->query('SELECT id, name, sku, brand, price, stock FROM products
         // Validate stock
         const stock = parseInt(option.dataset.stock);
         if (qtyInput && qtyInput.value > stock) {
-          alert('Stock tidak mencukupi. Stock tersedia: ' + stock);
           qtyInput.value = stock;
         }
         if (qtyInput) {
@@ -567,11 +902,554 @@ $products = $pdo->query('SELECT id, name, sku, brand, price, stock FROM products
       if (option.value && option.dataset.stock) {
         const stock = parseInt(option.dataset.stock);
         if (parseInt(this.value) > stock) {
-          alert('Stock tidak mencukupi. Stock tersedia: ' + stock);
           this.value = stock;
         }
       }
     });
+  }
+
+  // Order Detail Modal
+  const orderDetailModal = document.getElementById('orderDetailModal');
+  const orderDetailContent = document.getElementById('orderDetailContent');
+  const orderDetailClose = document.getElementById('btnCloseOrderDetail');
+
+  const toggleOrderDetail = (show) => {
+    if (!orderDetailModal) return;
+    orderDetailModal.classList.toggle('hidden', !show);
+    orderDetailModal.classList.toggle('flex', show);
+  };
+
+  if (orderDetailClose) {
+    orderDetailClose.addEventListener('click', () => toggleOrderDetail(false));
+  }
+  orderDetailModal?.addEventListener('click', (e) => {
+    if (e.target === orderDetailModal) toggleOrderDetail(false);
+  });
+  
+  // Function to reload order detail (without closing modal)
+  function reloadOrderDetail(orderId) {
+    if (!orderDetailContent) return;
+    
+    // Show loading indicator
+    const currentContent = orderDetailContent.innerHTML;
+    orderDetailContent.innerHTML = '<div class="text-center py-4 text-slate-500 text-sm">Memperbarui...</div>';
+    
+    // Fetch order details
+    const url = new URL(window.location);
+    url.searchParams.set('ajax', 'order_detail');
+    url.searchParams.set('order_id', orderId);
+    url.searchParams.set('page', 'sales');
+    
+    fetch(url.toString())
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.text();
+      })
+      .then(text => {
+        try {
+          const data = JSON.parse(text);
+          if (data.success && data.order) {
+            renderOrderDetail(data.order, data.statusColor);
+          } else {
+            console.error('Failed to reload order:', data.message);
+            orderDetailContent.innerHTML = currentContent; // Restore previous content
+          }
+        } catch (e) {
+          console.error('JSON Parse Error:', e);
+          console.error('Response text:', text);
+          orderDetailContent.innerHTML = currentContent; // Restore previous content
+        }
+      })
+      .catch(error => {
+        console.error('Fetch Error:', error);
+        orderDetailContent.innerHTML = currentContent; // Restore previous content
+      });
+  }
+
+  // Function to delete order item
+  window.deleteOrderItem = function(itemId, orderId) {
+    if (!confirm('Hapus item ini dari order?')) {
+      return;
+    }
+    
+    const url = new URL(window.location);
+    const searchParams = new URLSearchParams();
+    searchParams.set('ajax', 'delete_item');
+    searchParams.set('page', 'sales');
+    
+    const formData = new FormData();
+    formData.append('item_id', itemId);
+    
+    fetch('index.php?' + searchParams.toString(), {
+      method: 'POST',
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        // Reload order detail
+        reloadOrderDetail(orderId);
+        showNotification('Item berhasil dihapus.', 'success');
+      } else {
+        showNotification(data.message || 'Gagal menghapus item.', 'error');
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      showNotification('Terjadi kesalahan saat menghapus item.', 'error');
+    });
+  };
+
+  // Function to complete order
+  window.completeOrder = function(orderId) {
+    if (!confirm('Selesaikan order ini? Order akan diubah status menjadi "Paid" dan stock akan dikurangi.')) {
+      return;
+    }
+    
+    const url = new URL(window.location);
+    const searchParams = new URLSearchParams();
+    searchParams.set('ajax', 'complete_order');
+    searchParams.set('page', 'sales');
+    
+    const formData = new FormData();
+    formData.append('order_id', orderId);
+    
+    fetch('index.php?' + searchParams.toString(), {
+      method: 'POST',
+      body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+      if (data.success) {
+        showNotification(data.message || 'Order berhasil diselesaikan.', 'success');
+        // Close modal and reload page
+        toggleOrderDetail(false);
+        setTimeout(() => {
+          window.location.reload();
+        }, 1000);
+      } else {
+        showNotification(data.message || 'Gagal menyelesaikan order.', 'error');
+      }
+    })
+    .catch(error => {
+      console.error('Error:', error);
+      showNotification('Terjadi kesalahan saat menyelesaikan order.', 'error');
+    });
+  };
+
+  // Function to open order detail
+  window.openOrderDetail = function(orderId) {
+    if (!orderDetailContent) return;
+    
+    orderDetailContent.innerHTML = '<div class="text-center py-8 text-slate-500">Loading...</div>';
+    toggleOrderDetail(true);
+    
+    // Fetch order details
+    const url = new URL(window.location);
+    url.searchParams.set('ajax', 'order_detail');
+    url.searchParams.set('order_id', orderId);
+    url.searchParams.set('page', 'sales');
+    
+    fetch(url.toString())
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.text();
+      })
+      .then(text => {
+        try {
+          const data = JSON.parse(text);
+          if (data.success && data.order) {
+            renderOrderDetail(data.order, data.statusColor);
+          } else {
+            orderDetailContent.innerHTML = `<div class="text-center py-8 text-rose-500">${data.message || 'Order not found'}</div>`;
+          }
+        } catch (e) {
+          console.error('JSON Parse Error:', e);
+          console.error('Response text:', text);
+          orderDetailContent.innerHTML = '<div class="text-center py-8 text-rose-500">Error parsing response. Check console for details.</div>';
+        }
+      })
+      .catch(error => {
+        console.error('Fetch Error:', error);
+        orderDetailContent.innerHTML = '<div class="text-center py-8 text-rose-500">Error loading order details. Please check console.</div>';
+      });
+  };
+
+  // Function to render order detail
+  function renderOrderDetail(order, statusColor) {
+    const items = order.items || [];
+    let itemsHtml = '';
+    let total = 0;
+    
+    items.forEach(item => {
+      const itemTotal = parseFloat(item.qty) * parseFloat(item.price);
+      total += itemTotal;
+      itemsHtml += `
+        <div class="flex items-center justify-between py-3 border-b border-slate-100 last:border-0">
+          <div class="flex-1">
+            <p class="text-sm font-medium text-slate-900">${escapeHtml(item.product_name || 'Unknown Product')}</p>
+            ${item.sku ? `<p class="text-xs text-slate-500">SKU: ${escapeHtml(item.sku)}</p>` : ''}
+            <p class="text-xs text-slate-500">Qty: ${item.qty} x Rp ${formatNumber(item.price)}</p>
+          </div>
+          <div class="flex items-center gap-3">
+            <p class="text-sm font-semibold text-slate-900">Rp ${formatNumber(itemTotal)}</p>
+            ${order.status === 'pending' ? `
+            <button onclick="deleteOrderItem(${item.id}, ${order.id})" class="w-8 h-8 rounded-lg bg-red-100 hover:bg-red-200 flex items-center justify-center transition" title="Hapus Item">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4 text-red-600" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+              </svg>
+            </button>
+            ` : ''}
+          </div>
+        </div>
+      `;
+    });
+    
+    const orderDate = new Date(order.order_date + 'T00:00:00');
+    const formattedDate = orderDate.toLocaleDateString('en-GB', { day: 'numeric', month: 'numeric', year: 'numeric' });
+    
+    orderDetailContent.innerHTML = `
+      <!-- Order Summary -->
+      <div class="bg-slate-50 rounded-lg p-4 mb-4">
+        <div class="grid grid-cols-2 gap-4 text-sm">
+          <div>
+            <p class="text-slate-500 mb-1">Order Code</p>
+            <p class="font-semibold text-slate-900">${escapeHtml(order.code)}</p>
+          </div>
+          <div>
+            <p class="text-slate-500 mb-1">Status</p>
+            <span class="inline-block text-xs px-2 py-1 rounded-full ${statusColor}">${capitalizeFirst(order.status)}</span>
+          </div>
+          <div>
+            <p class="text-slate-500 mb-1">Customer</p>
+            <p class="font-semibold text-slate-900">${escapeHtml(order.customer_name)}</p>
+          </div>
+          <div>
+            <p class="text-slate-500 mb-1">Order Date</p>
+            <p class="font-semibold text-slate-900">${formattedDate}</p>
+          </div>
+        </div>
+      </div>
+
+      <!-- Order Items -->
+      <div class="mb-4">
+        <h3 class="text-sm font-semibold text-slate-900 mb-3">Order Items</h3>
+        ${items.length > 0 ? itemsHtml : '<p class="text-sm text-slate-500 text-center py-4">No items</p>'}
+      </div>
+
+
+      <!-- Total Amount -->
+      <div class="border-t border-slate-200 pt-4 mt-4">
+        <div class="flex items-center justify-between">
+          <span class="text-sm font-semibold text-slate-900">Total Amount</span>
+          <span class="text-lg font-bold text-slate-900">Rp ${formatNumber(total)}</span>
+        </div>
+      </div>
+
+      <!-- Add Item Form (only for pending orders) -->
+      ${order.status === 'pending' ? `
+      <div class="border-t border-slate-200 pt-4 mt-4">
+        <h3 class="text-sm font-semibold text-slate-900 mb-3">Add Item</h3>
+        <form id="addItemForm" class="space-y-3 p-3 bg-slate-50 rounded-lg">
+          <div class="grid grid-cols-2 gap-2">
+            <select id="modalProductSelect" required class="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+              <option value="">Pilih Produk</option>
+            </select>
+            <input type="number" id="modalQtyInput" min="1" value="1" required placeholder="Qty" class="rounded-lg border border-slate-200 px-3 py-2 text-sm">
+            <input type="number" id="modalPriceInput" step="0.01" min="0" required readonly placeholder="Price (auto-filled)" class="rounded-lg border border-slate-200 bg-slate-100 px-3 py-2 text-sm cursor-not-allowed">
+            <button type="submit" class="rounded-lg bg-emerald-500 text-white text-sm font-semibold py-2 hover:bg-emerald-600">Add Item</button>
+          </div>
+        </form>
+      </div>
+      
+      <!-- Complete Order Button (only if order has items) -->
+      ${items.length > 0 ? `
+      <div class="border-t border-slate-200 pt-4 mt-4">
+        <button onclick="completeOrder(${order.id})" class="w-full rounded-lg bg-gradient-to-r from-emerald-500 to-teal-500 text-white text-sm font-semibold py-3 hover:opacity-90 shadow-md">
+          ✓ Selesaikan Order
+        </button>
+      </div>
+      ` : ''}
+      ` : ''}
+    `;
+    
+    // Load products if status is pending
+    if (order.status === 'pending') {
+      loadProductsForModal(order.id);
+    }
+  }
+  
+  // Function to load products for modal with proper event handlers
+  function loadProductsForModal(orderId) {
+    const url = new URL(window.location);
+    url.searchParams.set('ajax', 'get_products');
+    url.searchParams.set('page', 'sales');
+    
+    fetch(url.toString())
+      .then(response => {
+        if (!response.ok) {
+          throw new Error('Network response was not ok');
+        }
+        return response.json();
+      })
+      .then(data => {
+        if (data.success && data.products) {
+          const productSelect = document.getElementById('modalProductSelect');
+          const priceInput = document.getElementById('modalPriceInput');
+          const qtyInput = document.getElementById('modalQtyInput');
+          
+          if (!productSelect || !priceInput || !qtyInput) {
+            console.error('Form elements not found');
+            return;
+          }
+          
+          // Populate product select
+          productSelect.innerHTML = '<option value="">-- Pilih Produk --</option>';
+          data.products.forEach(product => {
+            const option = document.createElement('option');
+            option.value = product.id;
+            option.textContent = `${product.name} (Stock: ${product.stock})`;
+            option.dataset.price = product.price;
+            option.dataset.stock = product.stock;
+            productSelect.appendChild(option);
+          });
+          
+          // Store handlers for re-attachment after clone
+          let productSelectChangeHandler = null;
+          let qtyInputHandler = null;
+          
+          // PENTING: Auto-fill price handler
+          productSelectChangeHandler = function() {
+            const selectedOption = this.options[this.selectedIndex];
+            const currentPriceInput = document.getElementById('modalPriceInput');
+            const currentQtyInput = document.getElementById('modalQtyInput');
+            
+            // Reset price jika tidak ada produk dipilih
+            if (!selectedOption.value || selectedOption.value === '') {
+              if (currentPriceInput) currentPriceInput.value = '';
+              if (currentQtyInput) currentQtyInput.removeAttribute('max');
+              return;
+            }
+            
+            // Auto-fill price dari data-price attribute
+            const price = parseFloat(selectedOption.dataset.price);
+            const stock = parseInt(selectedOption.dataset.stock);
+            
+            if (!isNaN(price) && price > 0) {
+              if (currentPriceInput) {
+                currentPriceInput.value = price;
+                console.log('✓ Price auto-filled:', price);
+              }
+            } else {
+              console.error('× Invalid price:', selectedOption.dataset.price);
+              if (currentPriceInput) currentPriceInput.value = '';
+            }
+            
+            // Set max quantity sesuai stock
+            if (currentQtyInput && !isNaN(stock) && stock > 0) {
+              currentQtyInput.setAttribute('max', stock);
+              const currentQty = parseInt(currentQtyInput.value) || 1;
+              if (currentQty > stock) {
+                currentQtyInput.value = stock;
+              }
+            }
+          };
+          
+          productSelect.addEventListener('change', productSelectChangeHandler);
+          
+          // Validate quantity against stock
+          qtyInputHandler = function() {
+            const currentProductSelect = document.getElementById('modalProductSelect');
+            const currentQtyInput = document.getElementById('modalQtyInput');
+            
+            if (currentProductSelect) {
+              const selectedOption = currentProductSelect.options[currentProductSelect.selectedIndex];
+              if (selectedOption && selectedOption.dataset.stock) {
+                const maxStock = parseInt(selectedOption.dataset.stock);
+                const currentQty = parseInt(this.value);
+                
+                if (currentQty > maxStock) {
+                  if (currentQtyInput) currentQtyInput.value = maxStock;
+                } else if (currentQty < 1) {
+                  if (currentQtyInput) currentQtyInput.value = 1;
+                }
+              }
+            }
+          };
+          
+          qtyInput.addEventListener('input', qtyInputHandler);
+          
+          // Handle form submission dengan validasi lengkap
+          const addItemForm = document.getElementById('addItemForm');
+          if (addItemForm) {
+            // Remove existing handler dan buat baru
+            const newForm = addItemForm.cloneNode(true);
+            addItemForm.parentNode.replaceChild(newForm, addItemForm);
+            
+            // Get updated references
+            const updatedProductSelect = document.getElementById('modalProductSelect');
+            const updatedQtyInput = document.getElementById('modalQtyInput');
+            const updatedPriceInput = document.getElementById('modalPriceInput');
+            
+            // Re-attach handlers to cloned elements
+            if (updatedProductSelect && productSelectChangeHandler) {
+              updatedProductSelect.addEventListener('change', productSelectChangeHandler);
+            }
+            if (updatedQtyInput && qtyInputHandler) {
+              updatedQtyInput.addEventListener('input', qtyInputHandler);
+            }
+            
+            // Submit handler dengan validasi ketat
+            document.getElementById('addItemForm').addEventListener('submit', function(e) {
+              e.preventDefault();
+              
+              const productId = updatedProductSelect.value.trim();
+              const qty = updatedQtyInput.value.trim();
+              const price = updatedPriceInput.value.trim();
+              
+              console.log('Form submit:', { productId, qty, price, orderId });
+              
+              // VALIDASI 1: Product harus dipilih
+              if (!productId || productId === '') {
+                showNotification('Mohon pilih produk terlebih dahulu.', 'error');
+                updatedProductSelect.focus();
+                return false;
+              }
+              
+              // VALIDASI 2: Quantity harus valid
+              if (!qty || qty === '' || parseInt(qty) <= 0) {
+                showNotification('Mohon isi quantity dengan benar (minimal 1).', 'error');
+                updatedQtyInput.focus();
+                return false;
+              }
+              
+              // VALIDASI 3: Price HARUS terisi (ini yang paling penting!)
+              if (!price || price === '' || parseFloat(price) <= 0) {
+                showNotification('Price belum terisi! Mohon pilih produk terlebih dahulu untuk auto-fill price.', 'error');
+                updatedProductSelect.focus();
+                return false;
+              }
+              
+              // VALIDASI 4: Check stock
+              const selectedOption = updatedProductSelect.options[updatedProductSelect.selectedIndex];
+              const maxStock = parseInt(selectedOption.dataset.stock) || 0;
+              if (parseInt(qty) > maxStock) {
+                showNotification(`Stock tidak mencukupi. Stock tersedia: ${maxStock} unit`, 'error');
+                updatedQtyInput.focus();
+                return false;
+              }
+              
+              // Semua validasi OK - submit form via AJAX
+              console.log('✓ Validation passed - submitting form via AJAX');
+              
+              // Disable submit button
+              const submitBtn = e.target.querySelector('button[type="submit"]');
+              const originalText = submitBtn ? submitBtn.textContent : 'Add Item';
+              if (submitBtn) {
+                submitBtn.disabled = true;
+                submitBtn.textContent = 'Adding...';
+              }
+              
+              // Build action URL
+              const currentUrl = new URL(window.location);
+              const searchParams = new URLSearchParams();
+              searchParams.set('ajax', 'add_item');
+              searchParams.set('page', 'sales');
+              
+              // Create form data
+              const formData = new FormData();
+              formData.append('sales_order_id', orderId);
+              formData.append('product_id', productId);
+              formData.append('qty', qty);
+              formData.append('price', price);
+              
+              // Submit via AJAX
+              fetch('index.php?' + searchParams.toString(), {
+                method: 'POST',
+                body: formData
+              })
+              .then(response => response.json())
+              .then(data => {
+                if (data.success) {
+                  // Reset form
+                  if (updatedProductSelect) updatedProductSelect.value = '';
+                  if (updatedQtyInput) updatedQtyInput.value = '1';
+                  if (updatedPriceInput) updatedPriceInput.value = '';
+                  
+                  // Reload order detail
+                  reloadOrderDetail(orderId);
+                  showNotification('Item berhasil ditambahkan.', 'success');
+                } else {
+                  showNotification(data.message || 'Gagal menambahkan item.', 'error');
+                }
+              })
+              .catch(error => {
+                console.error('Error:', error);
+                showNotification('Terjadi kesalahan saat menambahkan item.', 'error');
+              })
+              .finally(() => {
+                if (submitBtn) {
+                  submitBtn.disabled = false;
+                  submitBtn.textContent = originalText;
+                }
+              });
+              
+              return false;
+            });
+          }
+        } else {
+          console.error('Failed to load products:', data.message);
+          showNotification('Gagal memuat daftar produk. Silakan refresh halaman.', 'error');
+        }
+      })
+      .catch(error => {
+        console.error('Error loading products:', error);
+        showNotification('Error memuat produk. Silakan coba lagi.', 'error');
+      });
+  }
+
+  function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+  }
+
+  function formatNumber(num) {
+    return parseFloat(num).toLocaleString('id-ID', { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+  }
+
+  function capitalizeFirst(str) {
+    return str.charAt(0).toUpperCase() + str.slice(1);
+  }
+
+  // Function to show inline notification (replaces alert)
+  function showNotification(message, type = 'error') {
+    const notification = document.createElement('div');
+    notification.className = `fixed top-4 right-4 z-50 px-4 py-3 rounded-lg shadow-lg max-w-md ${
+      type === 'error' ? 'bg-rose-50 border border-rose-200 text-rose-700' : 
+      type === 'success' ? 'bg-emerald-50 border border-emerald-200 text-emerald-700' : 
+      'bg-blue-50 border border-blue-200 text-blue-700'
+    }`;
+    notification.innerHTML = `
+      <div class="flex items-center justify-between">
+        <span class="text-sm font-medium">${escapeHtml(message)}</span>
+        <button onclick="this.parentElement.parentElement.remove()" class="ml-4 text-current hover:opacity-70">
+          <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+          </svg>
+        </button>
+      </div>
+    `;
+    document.body.appendChild(notification);
+    setTimeout(() => {
+      if (notification.parentElement) {
+        notification.remove();
+      }
+    }, 5000);
   }
 </script>
 

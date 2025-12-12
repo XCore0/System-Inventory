@@ -2,7 +2,7 @@
 require_once __DIR__ . '/config/db.php';
 $pdo = getPdo();
 
-$exportType = $_GET['type'] ?? 'csv'; // csv or pdf
+$exportType = $_GET['type'] ?? 'csv'; // csv, xls, or pdf
 
 // Get all data for export
 $totalProducts = (int)$pdo->query('SELECT COUNT(*) FROM products')->fetchColumn();
@@ -122,6 +122,102 @@ if ($exportType === 'csv') {
     }
     
     fclose($output);
+    exit;
+} else if ($exportType === 'xls') {
+    // Export XLS using Excel XML format (SpreadsheetML)
+    header('Content-Type: application/vnd.ms-excel; charset=utf-8');
+    header('Content-Disposition: attachment; filename="inventory_report_' . date('Y-m-d') . '.xls"');
+    
+    // Excel XML header
+    echo '<?xml version="1.0" encoding="UTF-8"?>' . "\n";
+    echo '<?mso-application progid="Excel.Sheet"?>' . "\n";
+    echo '<Workbook xmlns="urn:schemas-microsoft-com:office:spreadsheet"' . "\n";
+    echo ' xmlns:o="urn:schemas-microsoft-com:office:office"' . "\n";
+    echo ' xmlns:x="urn:schemas-microsoft-com:office:excel"' . "\n";
+    echo ' xmlns:ss="urn:schemas-microsoft-com:office:spreadsheet"' . "\n";
+    echo ' xmlns:html="http://www.w3.org/TR/REC-html40">' . "\n";
+    echo '<Worksheet ss:Name="Inventory Report">' . "\n";
+    echo '<Table>' . "\n";
+    
+    // Helper function to escape XML
+    function escapeXml($text) {
+        return htmlspecialchars($text, ENT_XML1, 'UTF-8');
+    }
+    
+    // Helper function to add row
+    function addRow($values, $isHeader = false) {
+        echo '<Row>' . "\n";
+        foreach ($values as $value) {
+            $cellType = $isHeader ? 'String' : (is_numeric($value) ? 'Number' : 'String');
+            $style = $isHeader ? 'ss:StyleID="Header"' : '';
+            echo '<Cell ' . $style . '><Data ss:Type="' . $cellType . '">' . escapeXml($value) . '</Data></Cell>' . "\n";
+        }
+        echo '</Row>' . "\n";
+    }
+    
+    // Add styles
+    echo '<Styles>' . "\n";
+    echo '<Style ss:ID="Header">' . "\n";
+    echo '<Font ss:Bold="1"/>' . "\n";
+    echo '<Interior ss:Color="#CCCCCC" ss:Pattern="Solid"/>' . "\n";
+    echo '</Style>' . "\n";
+    echo '</Styles>' . "\n";
+    
+    // Stock Overview
+    addRow(['INVENTORY REPORT - ' . date('d M Y H:i:s')], true);
+    addRow([]);
+    addRow(['STOCK OVERVIEW'], true);
+    addRow(['Total Products', $totalProducts]);
+    addRow(['Total Stock Available', number_format($totalStock, 0, ',', '.')]);
+    addRow(['Low Stock Items', $lowStockCount]);
+    addRow([]);
+    
+    // Sales Overview
+    addRow(['SALES OVERVIEW'], true);
+    addRow(['Total Sales', 'Rp ' . number_format($totalSales, 0, ',', '.')]);
+    addRow(['Pending Orders', $pendingOrders]);
+    addRow(['Paid Orders', $paidOrders]);
+    addRow(['Shipped Orders', $shippedOrders]);
+    addRow([]);
+    
+    // Top Suppliers
+    addRow(['TOP SUPPLIERS'], true);
+    addRow(['Supplier Name', 'Product Count', 'Total Value'], true);
+    foreach ($topSuppliers as $supplier) {
+        addRow([
+            $supplier['name'],
+            $supplier['product_count'],
+            'Rp ' . number_format((float)$supplier['total_value'], 0, ',', '.')
+        ]);
+    }
+    addRow([]);
+    
+    // Top Products
+    addRow(['TOP SELLING PRODUCTS'], true);
+    addRow(['Product Name', 'Total Sold', 'Total Revenue'], true);
+    foreach ($topProducts as $product) {
+        addRow([
+            $product['name'],
+            number_format((int)$product['total_sold'], 0, ',', '.') . ' units',
+            'Rp ' . number_format((float)$product['total_revenue'], 0, ',', '.')
+        ]);
+    }
+    addRow([]);
+    
+    // Sales by Month
+    addRow(['SALES BY MONTH (Last 6 Months)'], true);
+    addRow(['Month', 'Order Count', 'Total Sales'], true);
+    foreach ($salesByMonth as $month) {
+        addRow([
+            $month['month_label'],
+            $month['order_count'],
+            'Rp ' . number_format((float)$month['total_sales'], 0, ',', '.')
+        ]);
+    }
+    
+    echo '</Table>' . "\n";
+    echo '</Worksheet>' . "\n";
+    echo '</Workbook>' . "\n";
     exit;
 } else if ($exportType === 'pdf') {
     // Export PDF using HTML to PDF approach
